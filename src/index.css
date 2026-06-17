@@ -1,0 +1,166 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    background-color: #000000;
+    color: #e5e2e1;
+    -webkit-font-smoothing: antialiased;
+    /* No global overflow lock — content scrolls on small screens (see plan). */
+  }
+
+  /* Disable text selection across the touch panel, like the original HMI. */
+  body {
+    user-select: none;
+  }
+}
+
+@layer components {
+  .material-symbols-outlined {
+    font-family: 'Material Symbols Outlined';
+    font-weight: normal;
+    font-style: normal;
+    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+    display: inline-block;
+    line-height: 1;
+    text-transform: none;
+    letter-spacing: normal;
+    word-wrap: normal;
+    white-space: nowrap;
+    direction: ltr;
+    -webkit-font-feature-settings: 'liga';
+    -webkit-font-smoothing: antialiased;
+  }
+  .material-symbols-outlined.fill {
+    font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  }
+
+  .glass-card {
+    background: rgba(30, 30, 30, 0.8);
+    backdrop-filter: blur(8px);
+    border: 1px solid #333333;
+  }
+
+  .heat-glow {
+    box-shadow: inset 0 0 40px rgba(211, 58, 1, 0.15), 0 0 20px rgba(211, 58, 1, 0.05);
+  }
+
+  .active-glow {
+    box-shadow: 0 0 15px rgba(211, 58, 1, 0.4);
+  }
+
+  .toggle-active {
+    box-shadow: 0 0 20px rgba(176, 198, 255, 0.2);
+  }
+
+  /* Atmospheric grid background (Ajustes / Energía) */
+  .grid-bg {
+    background-image: linear-gradient(to right, #ffffff05 1px, transparent 1px),
+      linear-gradient(to bottom, #ffffff05 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: #131313;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #434652;
+    border-radius: 10px;
+  }
+}
+
+/* ---- Range sliders (ported from mockups) ---- */
+input[type='range'].hmi-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  background: transparent;
+  cursor: pointer;
+}
+input[type='range'].hmi-range::-webkit-slider-runnable-track {
+  width: 100%;
+  height: 12px;
+  background: #434652;
+  border-radius: 6px;
+}
+input[type='range'].hmi-range::-moz-range-track {
+  width: 100%;
+  height: 12px;
+  background: #434652;
+  border-radius: 6px;
+}
+input[type='range'].hmi-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 32px;
+  width: 32px;
+  border-radius: 50%;
+  background: #b0c6ff;
+  margin-top: -10px;
+  border: 2px solid #131313;
+}
+input[type='range'].hmi-range::-moz-range-thumb {
+  height: 32px;
+  width: 32px;
+  border-radius: 50%;
+  background: #b0c6ff;
+  border: 2px solid #131313;
+}
+
+/* ---- Animations ---- */
+.pulse-led {
+  animation: pulse-led-animation 2s infinite;
+}
+@keyframes pulse-led-animation {
+  0% {
+    box-shadow: 0 0 0 0px rgba(125, 220, 122, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(125, 220, 122, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0px rgba(125, 220, 122, 0);
+  }
+}
+
+.pulse-text {
+  animation: pulse-text-animation 2s infinite ease-in-out;
+}
+@keyframes pulse-text-animation {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+/* ---- Gauge (Succión) ---- */
+.gauge-value {
+  fill: none;
+  stroke: #b0c6ff;
+  stroke-width: 12;
+  stroke-linecap: butt;
+  stroke-dasharray: 440;
+  transition: stroke-dashoffset 0.3s ease-out;
+}
+.gauge-background {
+  fill: none;
+  stroke: #333333;
+  stroke-width: 12;
+  stroke-linecap: butt;
+}
