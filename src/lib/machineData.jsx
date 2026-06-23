@@ -26,11 +26,12 @@ const INITIAL_STATE = {
   firstCrack: 192,
   target: 215,
   batch: {
-    name: 'Guatemala Antigua',
-    roast: 'Tueste Medio',
-    id: '1042',
-    time: '08:42',
-    humidity: 11.2,
+    product: 'Café', // Café o Cacao
+    variety: 'Geisha',
+    lot: 'LT-2026-1042',
+    origin: 'Finca El Injerto, Huehuetenango',
+    owner: 'Cooperativa Origen del Valle',
+    roastedKg: 24.5, // kg de tostado
   },
   actuators: {
     vacio: false,

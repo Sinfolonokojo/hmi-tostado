@@ -2,6 +2,8 @@ import { useMachineData } from '../lib/machineData.jsx'
 import Icon from '../components/Icon.jsx'
 import Toggle from '../components/ui/Toggle.jsx'
 import Slider from '../components/ui/Slider.jsx'
+import ExportMenu from '../components/ui/ExportMenu.jsx'
+import { exportFichaCSV, exportFichaXLSX } from '../lib/exportFicha.js'
 
 export default function Monitoreo() {
   const m = useMachineData()
@@ -57,21 +59,38 @@ export default function Monitoreo() {
         </div>
       </section>
 
-      {/* Batch status */}
+      {/* Ficha técnica */}
       <section className="lg:col-span-4 glass-card p-container-padding flex flex-col gap-stack-md rounded-xl">
-        <span className="text-label-md font-label-md text-outline-variant uppercase">Estado de Batch</span>
-        <div className="flex-grow flex items-center justify-between bg-surface-container rounded-lg px-gutter py-4">
-          <div>
-            <span className="text-headline-sm font-headline-sm block">{m.batch.name}</span>
-            <span className="text-label-md font-label-md text-primary">
-              {m.batch.roast} • Batch #{m.batch.id}
-            </span>
-          </div>
-          <Icon name="info" className="text-4xl text-outline-variant" />
+        <div className="flex items-center justify-between">
+          <span className="text-label-md font-label-md text-outline-variant uppercase">Ficha Técnica</span>
+          <ExportMenu onCsv={() => exportFichaCSV(m.batch)} onXlsx={() => exportFichaXLSX(m.batch)} />
         </div>
-        <div className="flex gap-stack-sm">
-          <MiniStat label="Tiempo" value={m.batch.time} />
-          <MiniStat label="Humedad" value={`${m.batch.humidity}%`} />
+
+        {/* Variedad + producto */}
+        <div className="flex items-center gap-4 bg-surface-container rounded-lg px-gutter py-4">
+          <div className="w-12 h-12 rounded-full bg-surface-container-highest flex items-center justify-center flex-shrink-0">
+            <Icon name={m.batch.product === 'Cacao' ? 'eco' : 'coffee'} className="text-primary" />
+          </div>
+          <div className="min-w-0">
+            <span className="text-headline-sm font-headline-sm block truncate">{m.batch.variety}</span>
+            <span className="text-label-md font-label-md text-primary">{m.batch.product}</span>
+          </div>
+        </div>
+
+        {/* Datos del lote */}
+        <div className="flex flex-col divide-y divide-outline-variant/30">
+          <SpecRow icon="tag" label="Lote" value={m.batch.lot} />
+          <SpecRow icon="location_on" label="Origen" value={m.batch.origin} />
+          <SpecRow icon="person" label="Propietario" value={m.batch.owner} />
+        </div>
+
+        {/* KG de tostado */}
+        <div className="mt-auto flex items-center justify-between bg-surface-container rounded-lg px-gutter py-3">
+          <span className="text-label-md font-label-md text-outline-variant uppercase">KG de Tostado</span>
+          <span className="text-headline-sm font-data-mono text-on-surface">
+            {m.batch.roastedKg}
+            <span className="text-base text-outline-variant ml-1">kg</span>
+          </span>
         </div>
       </section>
 
@@ -160,11 +179,12 @@ function Phase({ label, value }) {
   )
 }
 
-function MiniStat({ label, value }) {
+function SpecRow({ icon, label, value }) {
   return (
-    <div className="flex-1 bg-surface-container rounded-lg p-stack-md text-center">
-      <span className="text-xs text-outline block mb-1 uppercase">{label}</span>
-      <span className="text-headline-sm font-data-mono">{value}</span>
+    <div className="flex items-center gap-3 py-2.5">
+      <Icon name={icon} className="text-outline-variant text-xl flex-shrink-0" />
+      <span className="text-label-md font-label-md text-outline-variant uppercase flex-shrink-0">{label}</span>
+      <span className="text-body-md text-on-surface text-right ml-auto truncate">{value}</span>
     </div>
   )
 }
