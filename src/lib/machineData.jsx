@@ -56,11 +56,9 @@ const INITIAL_STATE = {
     { label: 'Motor 01 · Tambor', speed: 45 },
     { label: 'Motor 02 · Ventilador', speed: 62 },
     { label: 'Motor 03 · Enfriador', speed: 15 },
-    { label: 'Motor 04 · Agitador', speed: 80 },
   ],
   setpoint: 215, // °C resistance setpoint
   plcStatus: 'OPTIMAL',
-  rpmAverage: 1450,
   uptime: '08:24:12',
 
   // Energía

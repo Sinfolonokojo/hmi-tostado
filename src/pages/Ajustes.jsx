@@ -117,9 +117,8 @@ export default function Ajustes() {
         </div>
 
         {/* Status row */}
-        <div className="mt-margin grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-stack-md">
+        <div className="mt-margin grid grid-cols-1 sm:grid-cols-3 gap-stack-md">
           <StatCard icon="bolt" label="Consumo Total" value={`${m.heatConsumption} kW/h`} accent="text-primary" />
-          <StatCard icon="speed" label="RPM Promedio" value={m.rpmAverage.toLocaleString()} accent="text-tertiary" />
           <StatCard icon="update" label="Tiempo Activo" value={m.uptime} accent="text-secondary" />
           <StatCard icon="memory" label="Estado de PLC" value={m.plcStatus} accent="text-on-surface-variant" />
         </div>
