@@ -3,6 +3,7 @@ import Icon from '../components/Icon.jsx'
 import Toggle from '../components/ui/Toggle.jsx'
 import Slider from '../components/ui/Slider.jsx'
 import ExportMenu from '../components/ui/ExportMenu.jsx'
+import TempChart from '../components/ui/TempChart.jsx'
 import { exportFichaCSV, exportFichaXLSX } from '../lib/exportFicha.js'
 
 export default function Monitoreo() {
@@ -37,25 +38,14 @@ export default function Monitoreo() {
           </div>
         </div>
 
-        <div className="mt-8">
-          <div className="h-32 sm:h-40 relative w-full">
-            <svg className="w-full h-full opacity-60" viewBox="0 0 400 100" preserveAspectRatio="none">
-              <path d="M 0 80 Q 100 20 200 60 T 400 30" fill="none" stroke="#b0c6ff" strokeWidth="4" />
-              <path
-                d="M 0 80 Q 100 20 200 60 T 400 30"
-                fill="none"
-                stroke="#d33a01"
-                strokeDasharray="240 1000"
-                strokeWidth="4"
-              />
-              <circle cx="240" cy="52" fill="#d33a01" r="6" />
-            </svg>
-          </div>
-          <div className="flex justify-between w-full border-t border-outline-variant/30 pt-4 mt-4">
-            <Phase label="Punto de Carga" value={`${m.loadPoint}°C`} />
-            <Phase label="Primer Crack" value={`${m.firstCrack}°C`} />
-            <Phase label="Objetivo Final" value={`${m.target}°C`} />
-          </div>
+        <div className="flex-grow min-h-[220px] sm:min-h-[280px] w-full my-stack-md">
+          <TempChart data={m.tempHistory} target={m.target} firstCrack={m.firstCrack} />
+        </div>
+
+        <div className="flex justify-between w-full border-t border-outline-variant/30 pt-4">
+          <Phase label="Punto de Carga" value={`${m.loadPoint}°C`} />
+          <Phase label="Primer Crack" value={`${m.firstCrack}°C`} />
+          <Phase label="Objetivo Final" value={`${m.target}°C`} />
         </div>
       </section>
 
@@ -63,7 +53,10 @@ export default function Monitoreo() {
       <section className="lg:col-span-4 glass-card p-container-padding flex flex-col gap-stack-md rounded-xl">
         <div className="flex items-center justify-between">
           <span className="text-label-md font-label-md text-outline-variant uppercase">Ficha Técnica</span>
-          <ExportMenu onCsv={() => exportFichaCSV(m.batch)} onXlsx={() => exportFichaXLSX(m.batch)} />
+          <ExportMenu
+            onCsv={() => exportFichaCSV(m.batch, m.tempHistory)}
+            onXlsx={() => exportFichaXLSX(m.batch, m.tempHistory)}
+          />
         </div>
 
         {/* Variedad + producto */}
@@ -97,21 +90,6 @@ export default function Monitoreo() {
       {/* Actuadores */}
       <section className="lg:col-span-4 lg:row-span-2 lg:order-4 glass-card p-container-padding flex flex-col gap-gutter rounded-xl">
         <span className="text-label-md font-label-md text-outline-variant uppercase">Actuadores</span>
-
-        <div className="flex flex-col gap-stack-sm">
-          <div className="flex justify-between items-center">
-            <label className="text-body-lg font-semibold">Sistema de Vacío</label>
-            <span className={`text-label-md font-label-md ${m.actuators.vacio ? 'text-primary' : 'text-outline'}`}>
-              {m.actuators.vacio ? 'Activo' : 'Inactivo'}
-            </span>
-          </div>
-          <Toggle
-            label="Activar Vacío"
-            active={m.actuators.vacio}
-            onToggle={m.toggleVacio}
-            activeColor="bg-primary"
-          />
-        </div>
 
         <div className="flex flex-col gap-stack-sm">
           <div className="flex justify-between items-center">

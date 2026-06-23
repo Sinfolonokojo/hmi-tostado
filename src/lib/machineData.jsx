@@ -73,11 +73,31 @@ const INITIAL_STATE = {
   chamberTemp: 215.8,
   thermalEfficiency: 94.2,
 
+  // Temperatura vs tiempo — un snapshot por minuto durante el proceso (≈7-10 min).
+  // Sembrado con una curva de tostado realista para que el gráfico y la exportación
+  // tengan datos de inmediato; luego se agrega un punto en vivo cada 60 s.
+  tempHistory: [
+    { minute: 0, temperature: 120 },
+    { minute: 1, temperature: 138 },
+    { minute: 2, temperature: 155 },
+    { minute: 3, temperature: 168 },
+    { minute: 4, temperature: 178 },
+    { minute: 5, temperature: 186 },
+    { minute: 6, temperature: 193 },
+    { minute: 7, temperature: 200 },
+  ],
+
   // Global
   connected: true,
   emergency: false,
+  roastRunning: false, // ¿proceso de tostado en curso? (botón Iniciar Proceso)
   sessionTime: '00:42:15',
 }
+
+// Cadencia real de muestreo del proceso (60 s). Se aísla aquí para poder
+// acelerarla en pruebas o reemplazarla por el reloj del Arduino más adelante.
+const SNAPSHOT_INTERVAL_MS = 60_000
+const MAX_HISTORY = 20
 
 // Derived suction metrics from the actual speed (ported from the mockup math).
 export function suctionMetrics(speed) {
@@ -137,7 +157,40 @@ export function MachineDataProvider({ children }) {
     return () => clearInterval(id)
   }, [])
 
+  // ---- TEMPERATURE HISTORY: one snapshot per minute ----
+  useEffect(() => {
+    const id = setInterval(() => {
+      setState((prev) => {
+        if (!prev.roastRunning) return prev // sólo se registra durante el proceso
+        const last = prev.tempHistory[prev.tempHistory.length - 1]
+        const minute = (last ? last.minute : -1) + 1
+        const entry = { minute, temperature: Math.round(prev.temperature * 10) / 10 }
+        return { ...prev, tempHistory: [...prev.tempHistory, entry].slice(-MAX_HISTORY) }
+      })
+    }, SNAPSHOT_INTERVAL_MS)
+    return () => clearInterval(id)
+  }, [])
+
   // ---- COMMANDS (pages call these; later they'd also write to the device) ----
+
+  const resetHistory = useCallback(
+    () => setState((p) => ({ ...p, tempHistory: [{ minute: 0, temperature: Math.round(p.temperature * 10) / 10 }] })),
+    [],
+  )
+
+  // Iniciar Proceso: arranca un nuevo tostado y empieza a registrar desde cero.
+  const startRoast = useCallback(
+    () =>
+      setState((p) => ({
+        ...p,
+        roastRunning: true,
+        actuators: { ...p.actuators, heat: true },
+        tempHistory: [{ minute: 0, temperature: Math.round(p.temperature * 10) / 10 }],
+      })),
+    [],
+  )
+
+  const stopRoast = useCallback(() => setState((p) => ({ ...p, roastRunning: false })), [])
   const toggleVacio = useCallback(
     () => setState((p) => ({ ...p, actuators: { ...p.actuators, vacio: !p.actuators.vacio } })),
     [],
@@ -244,6 +297,9 @@ export function MachineDataProvider({ children }) {
     allOff,
     emergencyStop,
     clearEmergency,
+    resetHistory,
+    startRoast,
+    stopRoast,
   }
 
   return <MachineDataContext.Provider value={value}>{children}</MachineDataContext.Provider>
