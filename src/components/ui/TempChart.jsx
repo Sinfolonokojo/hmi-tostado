@@ -16,7 +16,7 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, 
  * Temperature vs. time roast curve (Chart.js). `data`: [{ minute, temperature }].
  * Optional `target` / `firstCrack` draw dashed reference lines.
  */
-export default function TempChart({ data = [], target, firstCrack }) {
+export default function TempChart({ data = [], target, firstCrack, chartRef }) {
   const labels = data.map((d) => `${d.minute}′`)
   const temps = data.map((d) => d.temperature)
 
@@ -123,5 +123,5 @@ export default function TempChart({ data = [], target, firstCrack }) {
     )
   }
 
-  return <Line data={{ labels, datasets }} options={options} />
+  return <Line ref={chartRef} data={{ labels, datasets }} options={options} />
 }

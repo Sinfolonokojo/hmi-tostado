@@ -1,14 +1,31 @@
+import { useRef } from 'react'
 import { useMachineData } from '../lib/machineData.jsx'
 import Icon from '../components/Icon.jsx'
 import Toggle from '../components/ui/Toggle.jsx'
 import Slider from '../components/ui/Slider.jsx'
 import ExportMenu from '../components/ui/ExportMenu.jsx'
 import TempChart from '../components/ui/TempChart.jsx'
-import { exportFichaCSV, exportFichaXLSX } from '../lib/exportFicha.js'
+import { exportFichaCSV, exportFichaXLSX, exportChartPNG } from '../lib/exportFicha.js'
 
 export default function Monitoreo() {
   const m = useMachineData()
   const heatOn = m.actuators.heat
+  const chartRef = useRef(null)
+
+  // Snapshot the live roast curve as a PNG on a dark plate (readable when embedded).
+  const getChartImage = () => {
+    const chart = chartRef.current
+    if (!chart?.canvas) return null
+    const src = chart.canvas
+    const out = document.createElement('canvas')
+    out.width = src.width
+    out.height = src.height
+    const ctx = out.getContext('2d')
+    ctx.fillStyle = '#1c1b1b'
+    ctx.fillRect(0, 0, out.width, out.height)
+    ctx.drawImage(src, 0, 0)
+    return out.toDataURL('image/png')
+  }
 
   return (
     <div className="p-margin grid grid-cols-1 lg:grid-cols-12 gap-gutter">
@@ -39,7 +56,7 @@ export default function Monitoreo() {
         </div>
 
         <div className="flex-grow min-h-[220px] sm:min-h-[280px] w-full my-stack-md">
-          <TempChart data={m.tempHistory} target={m.target} firstCrack={m.firstCrack} />
+          <TempChart data={m.tempHistory} target={m.target} firstCrack={m.firstCrack} chartRef={chartRef} />
         </div>
 
         <div className="flex justify-between w-full border-t border-outline-variant/30 pt-4">
@@ -55,7 +72,8 @@ export default function Monitoreo() {
           <span className="text-label-md font-label-md text-outline-variant uppercase">Ficha Técnica</span>
           <ExportMenu
             onCsv={() => exportFichaCSV(m.batch, m.tempHistory)}
-            onXlsx={() => exportFichaXLSX(m.batch, m.tempHistory)}
+            onXlsx={() => exportFichaXLSX(m.batch, m.tempHistory, getChartImage())}
+            onPng={() => exportChartPNG(m.batch, getChartImage())}
           />
         </div>
 

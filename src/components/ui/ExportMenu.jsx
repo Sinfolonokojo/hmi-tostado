@@ -2,7 +2,7 @@ import { useState } from 'react'
 import Icon from '../Icon.jsx'
 
 /** Small dropdown to export data in CSV or XLSX. */
-export default function ExportMenu({ onCsv, onXlsx }) {
+export default function ExportMenu({ onCsv, onXlsx, onPng }) {
   const [open, setOpen] = useState(false)
 
   return (
@@ -29,12 +29,22 @@ export default function ExportMenu({ onCsv, onXlsx }) {
             />
             <MenuItem
               icon="table_view"
-              label="Exportar Excel"
+              label="Excel + gráfico"
               onClick={() => {
                 setOpen(false)
                 onXlsx()
               }}
             />
+            {onPng && (
+              <MenuItem
+                icon="show_chart"
+                label="Gráfico (PNG)"
+                onClick={() => {
+                  setOpen(false)
+                  onPng()
+                }}
+              />
+            )}
           </div>
         </>
       )}
