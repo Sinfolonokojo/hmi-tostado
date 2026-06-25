@@ -1,4 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react'
+import { createBridgeClient } from './bridgeClient'
+import { applyTelemetry, deriveTrend } from './bridgeProtocol'
 
 /**
  * Single source of truth for the whole machine.
@@ -87,6 +89,7 @@ const INITIAL_STATE = {
 
   // Global
   connected: true,
+  fault: null,
   emergency: false,
   roastRunning: false, // ¿proceso de tostado en curso? (botón Iniciar Proceso)
   sessionTime: '00:42:15',
@@ -117,6 +120,15 @@ export function MachineDataProvider({ children }) {
   const stateRef = useRef(state)
   stateRef.current = state
 
+  // Live mode: temperature/setpoint/heat/fault come from the laptop bridge.
+  // Falls back to the full simulator when ?sim is present or no bridge URL is set.
+  const BRIDGE_URL = import.meta.env.VITE_BRIDGE_URL
+  const SIM = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('sim')
+  const LIVE = !SIM && !!BRIDGE_URL
+  const prevTempRef = useRef(null)
+  const prevTsRef = useRef(null)
+  const bridgeRef = useRef(null)
+
   // ---- MOCK SIMULATOR (replace with hardware feed later) ----
   useEffect(() => {
     const id = setInterval(() => {
@@ -138,14 +150,16 @@ export function MachineDataProvider({ children }) {
           r.on ? { ...r, kw: +clamp(r.kw + (Math.random() - 0.5) * 0.1, 2.8, 3.6).toFixed(1) } : r,
         )
 
-        // Temperature: drift toward target while heat is on, cool slightly when off.
-        if (prev.actuators.heat) {
-          const drift = (prev.target - prev.temperature) * 0.01 + (Math.random() - 0.5) * 0.15
-          next.temperature = +(prev.temperature + drift).toFixed(1)
-          next.trend = +clamp(drift * 60, -5, 6).toFixed(1)
-        } else {
-          next.temperature = +(prev.temperature - 0.15).toFixed(1)
-          next.trend = -0.9
+        // Temperature: in LIVE mode the bridge owns it; only simulate otherwise.
+        if (!LIVE) {
+          if (prev.actuators.heat) {
+            const drift = (prev.target - prev.temperature) * 0.01 + (Math.random() - 0.5) * 0.15
+            next.temperature = +(prev.temperature + drift).toFixed(1)
+            next.trend = +clamp(drift * 60, -5, 6).toFixed(1)
+          } else {
+            next.temperature = +(prev.temperature - 0.15).toFixed(1)
+            next.trend = -0.9
+          }
         }
 
         next.chamberTemp = +(next.temperature + 35.8).toFixed(1)
@@ -153,7 +167,7 @@ export function MachineDataProvider({ children }) {
       })
     }, 120)
     return () => clearInterval(id)
-  }, [])
+  }, [LIVE])
 
   // ---- TEMPERATURE HISTORY: one snapshot per minute ----
   useEffect(() => {
@@ -168,6 +182,32 @@ export function MachineDataProvider({ children }) {
     }, SNAPSHOT_INTERVAL_MS)
     return () => clearInterval(id)
   }, [])
+
+  // ---- LIVE BRIDGE: telemetry in, commands out ----
+  useEffect(() => {
+    if (!LIVE) return
+    const client = createBridgeClient({
+      url: BRIDGE_URL,
+      onTelemetry: (data) => {
+        setState((prev) => {
+          let trend = prev.trend
+          if (data.temperature != null) {
+            const now = Date.now()
+            trend = deriveTrend(prevTempRef.current, data.temperature, prevTsRef.current ? now - prevTsRef.current : 0)
+            prevTempRef.current = data.temperature
+            prevTsRef.current = now
+          }
+          return { ...applyTelemetry(prev, data), trend }
+        })
+      },
+      onStatus: (s) => setState((prev) => ({ ...prev, connected: !!s.connected })),
+    })
+    bridgeRef.current = client
+    return () => {
+      client.close()
+      bridgeRef.current = null
+    }
+  }, [LIVE, BRIDGE_URL])
 
   // ---- COMMANDS (pages call these; later they'd also write to the device) ----
 
@@ -195,7 +235,12 @@ export function MachineDataProvider({ children }) {
   )
 
   const toggleHeat = useCallback(
-    () => setState((p) => ({ ...p, actuators: { ...p.actuators, heat: !p.actuators.heat } })),
+    () =>
+      setState((p) => {
+        const heat = !p.actuators.heat
+        if (bridgeRef.current) bridgeRef.current.sendCommand('setHeat', [heat])
+        return { ...p, actuators: { ...p.actuators, heat } }
+      }),
     [],
   )
 
@@ -259,7 +304,12 @@ export function MachineDataProvider({ children }) {
   )
 
   const setSetpoint = useCallback(
-    (value) => setState((p) => ({ ...p, setpoint: clamp(Math.round(value), 0, 450) })),
+    (value) =>
+      setState((p) => {
+        const setpoint = clamp(Math.round(value), 0, 450)
+        if (bridgeRef.current) bridgeRef.current.sendCommand('setSetpoint', [setpoint])
+        return { ...p, setpoint }
+      }),
     [],
   )
 
@@ -270,13 +320,16 @@ export function MachineDataProvider({ children }) {
 
   const emergencyStop = useCallback(
     () =>
-      setState((p) => ({
-        ...p,
-        emergency: true,
-        actuators: { vacio: false, heat: false },
-        suction: { ...p.suction, running: false, targetSpeed: 0 },
-        resistances: p.resistances.map(() => ({ on: false, kw: 0 })),
-      })),
+      setState((p) => {
+        if (bridgeRef.current) bridgeRef.current.sendCommand('estop')
+        return {
+          ...p,
+          emergency: true,
+          actuators: { vacio: false, heat: false },
+          suction: { ...p.suction, running: false, targetSpeed: 0 },
+          resistances: p.resistances.map(() => ({ on: false, kw: 0 })),
+        }
+      }),
     [],
   )
 
