@@ -84,6 +84,19 @@ cloudflared tunnel --url http://localhost:8080
    stable hostname + `VITE_BRIDGE_URL` env var in Vercel, so the plain URL "just works"
    with no `?bridge=` param.
 
+## Relay / heat hardware (decided 2026-06-25)
+
+- **Heater:** sealed electric burner, **1100 W @ 110 VAC** (the listing's "1100 V" is a typo) → **~10 A** running current. Has its **own knob/thermostat + power switch**.
+  - First bring-up: set the burner knob to **max** and let the SSR + Arduino do the on/off. Its **internal thermostat may still cycle** and fight the bang-bang loop (expected — a temperature plateau even when our SSR says ON). Bypassing the burner's internal thermostat to switch the element directly is a deeper mod for later.
+- **SSR — Fotek SSR-40 DA** (DC control, AC switching, zero-cross):
+  - Control input: terminal **3 (+)** ← Arduino **D8**, terminal **4 (−)** ← Arduino **GND** (`3-32VDC`, 5V logic HIGH triggers it).
+  - Load output: terminals **1 / 2** (`24-380VAC`) switch the **Live** wire.
+  - 10 A ≪ 40 A label, but **heatsink + thermal paste is mandatory** (it dissipates ~12–15 W). Fotek is counterfeit-prone and **fails SHORTED (stuck ON)** — derate it and never rely on it alone.
+- **Overcurrent protection:** **15 A** time-delay, **250 VAC** fuse (e.g. Bussmann **MDA-15** + holder) or a **15 A C-curve DIN breaker**; **14 AWG** wire.
+- **Independent thermal cutoff** (NOT optional — software is not the safety net): **KSD9700** bimetal ~230–250 °C clamped to the chamber, or a one-shot thermal fuse ≥10 A, **in series with Live**.
+- **Load wiring order:** AC Live → fuse/breaker → thermal cutoff → SSR terminal 1; SSR terminal 2 → heater; heater → Neutral.
+- **Bench-test sequence (do in order):** (1) logic side only, heater **unplugged**, toggle heat in UI → watch the SSR's own LED; (2) plug heater, verify heat toggle switches it and telemetry `actuators.heat` follows; (3) watchdog: enable heat, kill the bridge → SSR off within 5 s; (4) e-stop button → SSR off.
+
 ## Reference docs
 - Design spec: `docs/superpowers/specs/2026-06-24-arduino-bridge-design.md`
 - Implementation plan: `docs/superpowers/plans/2026-06-24-arduino-bridge.md`
