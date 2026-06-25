@@ -66,6 +66,9 @@ const uint16_t TC_READ_MS       = 250;     // MAX6675 needs >= ~220 ms per conve
 const uint16_t TELEMETRY_MS     = 500;     // how often we report state to the UI
 const uint32_t COMMS_TIMEOUT_MS = 5000;    // fail-safe if the UI goes silent
 const bool     WATCHDOG_ENABLED = true;    // false = no heartbeat required (bench only)
+const bool     PLOTTER_MODE     = false;   // true = emit Serial-Plotter lines instead of
+                                           // JSON (bench-only; the bridge/UI need JSON, so
+                                           // keep this false except when graphing in the IDE)
 
 // ---------------- Hardware ----------------
 MAX6675 thermocouple(PIN_TC_SCK, PIN_TC_CS, PIN_TC_SO);
@@ -123,7 +126,22 @@ void readSerialCommands(uint32_t now) {
   }
 }
 
+// Emit one line the Arduino IDE Serial Plotter can graph: "label:value" pairs,
+// comma-separated. Open Tools -> Serial Plotter at 115200 baud to see the curves.
+// Heater is scaled to the setpoint so its on/off square wave is visible against
+// the temperature trace instead of being pinned flat at 0/1.
+void sendPlotterLine() {
+  Serial.print("Temperature:");
+  Serial.print((tcFault || isnan(lastTempC)) ? 0.0 : lastTempC, 1);
+  Serial.print(",Setpoint:");
+  Serial.print(setpointC, 1);
+  Serial.print(",Heater:");
+  Serial.println(ssrOn ? setpointC : 0.0, 1);
+}
+
 void sendTelemetry(bool commsLost) {
+  if (PLOTTER_MODE) { sendPlotterLine(); return; }
+
   JsonDocument doc;
 
   if (tcFault || isnan(lastTempC)) doc["temperature"] = nullptr;
