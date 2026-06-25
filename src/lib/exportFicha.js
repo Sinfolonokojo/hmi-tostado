@@ -11,8 +11,8 @@ const fichaRows = (batch) => [
 ]
 
 const historyRows = (history = []) => [
-  ['Tiempo (min)', 'Temperatura (°C)'],
-  ...history.map((h) => [h.minute, h.temperature]),
+  ['Tiempo (s)', 'Temperatura (°C)'],
+  ...history.map((h) => [h.minute * 20, h.temperature]),
 ]
 
 function fileName(batch, ext) {

@@ -97,7 +97,7 @@ const INITIAL_STATE = {
 
 // Cadencia real de muestreo del proceso (60 s). Se aísla aquí para poder
 // acelerarla en pruebas o reemplazarla por el reloj del Arduino más adelante.
-const SNAPSHOT_INTERVAL_MS = 60_000
+const SNAPSHOT_INTERVAL_MS = 20_000
 const MAX_HISTORY = 20
 
 // Derived suction metrics from the actual speed (ported from the mockup math).
@@ -169,7 +169,7 @@ export function MachineDataProvider({ children }) {
     return () => clearInterval(id)
   }, [LIVE])
 
-  // ---- TEMPERATURE HISTORY: one snapshot per minute ----
+  // ---- TEMPERATURE HISTORY: one snapshot every 20 s ----
   useEffect(() => {
     const id = setInterval(() => {
       setState((prev) => {

@@ -17,7 +17,8 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, 
  * Optional `target` / `firstCrack` draw dashed reference lines.
  */
 export default function TempChart({ data = [], target, firstCrack, chartRef }) {
-  const labels = data.map((d) => `${d.minute}′`)
+  // Each history sample is taken every 20 s; the x value is elapsed seconds.
+  const labels = data.map((d) => `${d.minute * 20}`)
   const temps = data.map((d) => d.temperature)
 
   const refs = [target, firstCrack].filter((v) => typeof v === 'number')
@@ -103,7 +104,7 @@ export default function TempChart({ data = [], target, firstCrack, chartRef }) {
       x: {
         grid: { color: 'rgba(255,255,255,0.05)' },
         ticks: { color: '#8d909d', font: { family: 'JetBrains Mono' } },
-        title: { display: true, text: 'TIEMPO (min)', color: '#8d909d', font: { family: 'JetBrains Mono', size: 10 } },
+        title: { display: true, text: 'TIEMPO (s)', color: '#8d909d', font: { family: 'JetBrains Mono', size: 10 } },
       },
       y: {
         min: yMin,
