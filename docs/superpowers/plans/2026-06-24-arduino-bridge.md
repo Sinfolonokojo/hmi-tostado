@@ -2,119 +2,56 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Connect the real prototype hardware (1 thermocouple input + 1 SSR stove output) to the Vercel-hosted HMI so the UI shows live temperature and the heat button drives the stove, via a laptop bridge tunneled with Cloudflare.
+**Goal:** Connect the real prototype hardware (1 thermocouple + 1 SSR, closed-loop firmware already written) to the Vercel-hosted HMI so the UI shows live temperature and commands heat-enable, setpoint, and e-stop, via a laptop bridge tunneled with Cloudflare.
 
-**Architecture:** Arduino emits newline-JSON telemetry over USB serial and accepts compact commands (drives the SSR, has a 5s comms watchdog). A small Node bridge on the laptop reads the serial port, broadcasts telemetry over WebSocket, and relays commands back. Cloudflare Tunnel exposes the WebSocket as a stable `wss://` hostname so the HTTPS Vercel page can connect. The UI's single data hook (`machineData.jsx`) swaps its temperature source + heat toggle to the WebSocket; everything else stays simulated.
+**Architecture:** The Arduino runs a **closed-loop bang-bang controller** and emits newline-JSON telemetry over USB serial; it accepts newline-JSON commands. A small Node bridge on the laptop reads the serial port, broadcasts telemetry over WebSocket, and relays commands back (translating WS command names → JSON serial lines). Cloudflare Tunnel exposes the WebSocket as a stable `wss://` hostname so the HTTPS Vercel page can connect. The UI's single data hook (`machineData.jsx`) swaps temperature/setpoint/heat/e-stop to the WebSocket; everything else stays simulated.
 
-**Tech Stack:** Arduino C++ (Adafruit MAX6675 lib), Node.js (serialport, ws), Cloudflare Tunnel (`cloudflared`), React/Vite (existing UI). Tests use Node's built-in `node --test` (no new test framework).
+**Tech Stack:** Arduino C++ (firmware already provided), Node.js (serialport, ws), Cloudflare Tunnel (`cloudflared`), React/Vite (existing UI). Tests use Node's built-in `node --test` (no new test framework).
 
 ## Global Constraints
 
-- **Serial:** 115200 baud, newline (`\n`) delimited, one JSON object per telemetry line.
-- **Telemetry shape (Arduino→bridge):** `{"t":<°C number>,"heat":<0|1>}`.
-- **Serial commands (bridge→Arduino):** `H1` heat on, `H0` heat off, `K` heartbeat. Each terminated with `\n`.
-- **WebSocket messages:** `{type:"telemetry",data:{t,heat}}` and `{type:"status",connected,serial}` down; `{type:"command",name,args}` up.
-- **Watchdog:** Arduino turns the SSR off if no serial line received for 5000 ms.
+- **Serial:** 115200 baud, newline (`\n`) delimited, **one JSON object per line in both directions**.
+- **Telemetry (Arduino→bridge):** `{"temperature":<°C|null>,"setpoint":<°C>,"actuators":{"heat":<bool>},"enabled":<bool>,"connected":true,"fault":<string|null>}`. `fault` ∈ `"thermocouple"|"estop"|"comms"|"overtemp"|null`. `actuators.heat` is the **actual** SSR state (flickers with bang-bang); `enabled` is the commanded master enable.
+- **Serial commands (bridge→Arduino):** `{"heat":<bool>}`, `{"setpoint":<num>}`, `{"estop":true}`, `{"ping":1}`. Each terminated with `\n`.
+- **WebSocket messages:** `{type:"telemetry",data:{…}}` and `{type:"status",connected,serial}` down; `{type:"command",name,args}` up. Command names: `setHeat`, `setSetpoint`, `estop`, `heartbeat`.
+- **Watchdog:** firmware turns the SSR off if no serial line arrives for 5000 ms; also forces SSR off on overtemp (260 °C), thermocouple fault, or latched e-stop.
 - **No auth** (prototype).
-- **UI changes are confined to `src/lib/`** — existing pages/components are not modified. Non-hardware controls remain simulated.
-- **Keep `?sim` mode** working (full simulator, no bridge) for offline dev.
-- Node project uses ESM (`"type":"module"`). Match existing 2-space indentation, no semicolons in UI JS (the repo omits them), single quotes.
+- **UI changes are confined to `src/lib/`** — pages/components are not modified. Non-hardware controls (suction, resistances, fan, motors) remain simulated.
+- **Keep `?sim` mode** working (full simulator, no bridge).
+- Match repo style: UI JS omits semicolons, single quotes, 2-space indent; mirror that in the new Node bridge.
 
 ---
 
-### Task 1: Arduino firmware sketch
+### Task 1: Flash & verify the provided firmware (manual)
 
 **Files:**
-- Create: `firmware/hmi_tostado/hmi_tostado.ino`
+- Already present: `firmware/tostadora/tostadora.ino` (closed-loop controller — do not rewrite).
 
-**Interfaces:**
-- Produces (serial contract): emits `{"t":NNN.N,"heat":0|1}\n` every 500 ms; accepts `H1`/`H0`/`K` lines; SSR off after 5 s without any serial line.
+**Interfaces (the serial contract every later task depends on):**
+- Emits the telemetry JSON above every ~500 ms.
+- Accepts the command JSON above; any valid line refreshes the 5 s watchdog.
 
-> Embedded code can't be unit-tested here; verification is manual via the Arduino IDE Serial Monitor. Prerequisite: install the **"MAX6675 library by Adafruit"** via Library Manager.
+> Prerequisite libraries (Arduino IDE → Manage Libraries): **"MAX6675 library" by Adafruit** and **"ArduinoJson" by Benoit Blanchon (v7.x)**.
 
-- [ ] **Step 1: Write the sketch**
+- [ ] **Step 1: Compile & upload**
 
-```cpp
-#include <max6675.h>
+Open `firmware/tostadora/tostadora.ino`, select board **Arduino UNO** + the correct port, click Upload. Expected: "Done uploading", no compile errors.
 
-// --- Pin map (adjust to your wiring) ---
-const int thermoSO  = 4;   // MAX6675 SO  (data out)
-const int thermoCS  = 5;   // MAX6675 CS  (chip select)
-const int thermoSCK = 6;   // MAX6675 SCK (clock)
-const int ssrPin    = 8;   // SSR control (HIGH = stove ON)
+- [ ] **Step 2: Verify telemetry (manual)**
 
-MAX6675 thermocouple(thermoSCK, thermoCS, thermoSO);
+Serial Monitor at **115200 baud**, line ending **Newline**. Expected ~2 lines/sec like:
+`{"temperature":24.8,"setpoint":215,"actuators":{"heat":false},"enabled":false,"connected":true,"fault":null}`
+(If the thermocouple is disconnected, `"temperature":null` and `"fault":"thermocouple"`.)
 
-bool heat = false;
-unsigned long lastTelemetry = 0;
-unsigned long lastComms = 0;
-const unsigned long TELEMETRY_MS = 500;
-const unsigned long WATCHDOG_MS  = 5000;
-String inbuf = "";
+- [ ] **Step 3: Verify command + closed loop (manual)**
 
-void applyHeat(bool on) {
-  heat = on;
-  digitalWrite(ssrPin, heat ? HIGH : LOW);
-}
+Send `{"setpoint":40}` then `{"heat":true}`. Expected: `enabled` becomes `true`; if room temp < 38 °C the SSR clicks on (`actuators.heat:true`) and `temperature` rises toward 40, then cycles off at 40. Send `{"heat":false}` → SSR off.
 
-void handleCommand(String cmd) {
-  cmd.trim();
-  lastComms = millis();          // any valid line = bridge is alive
-  if (cmd == "H1") applyHeat(true);
-  else if (cmd == "H0") applyHeat(false);
-  // "K" is a pure heartbeat: only refreshes lastComms (done above)
-}
+- [ ] **Step 4: Verify watchdog + e-stop (manual)**
 
-void setup() {
-  pinMode(ssrPin, OUTPUT);
-  applyHeat(false);
-  Serial.begin(115200);
-  lastComms = millis();
-}
+With heat enabled, **stop sending lines** for >5 s → `fault` becomes `"comms"` and SSR off. Re-send `{"heat":true}`, then send `{"estop":true}` → `fault:"estop"`, SSR off and stays off until heat is re-enabled.
 
-void loop() {
-  while (Serial.available()) {
-    char c = Serial.read();
-    if (c == '\n') { handleCommand(inbuf); inbuf = ""; }
-    else if (c != '\r') inbuf += c;
-  }
-
-  unsigned long now = millis();
-
-  // Safety watchdog: kill the stove if comms went silent.
-  if (heat && (now - lastComms > WATCHDOG_MS)) applyHeat(false);
-
-  if (now - lastTelemetry >= TELEMETRY_MS) {
-    lastTelemetry = now;
-    double t = thermocouple.readCelsius();
-    Serial.print("{\"t\":");
-    Serial.print(t, 1);
-    Serial.print(",\"heat\":");
-    Serial.print(heat ? 1 : 0);
-    Serial.println("}");
-  }
-}
-```
-
-- [ ] **Step 2: Compile & upload**
-
-In Arduino IDE: select the board + port, click Upload. Expected: "Done uploading" with no compile errors.
-
-- [ ] **Step 3: Verify telemetry (manual)**
-
-Open Serial Monitor at **115200 baud**, line ending **Newline**. Expected: a line like `{"t":24.8,"heat":0}` roughly twice per second.
-
-- [ ] **Step 4: Verify command + watchdog (manual)**
-
-Type `H1` + Enter. Expected: SSR clicks on, telemetry shows `"heat":1`. Type `H0` + Enter → `"heat":0`. Then type `H1` again and **stop typing** for >5 s. Expected: telemetry flips back to `"heat":0` on its own (watchdog tripped).
-
-- [ ] **Step 5: Commit**
-
-```bash
-cd /Users/Work_tmp/Julian/hmi-tostado
-git add firmware/hmi_tostado/hmi_tostado.ino
-git commit -m "feat(firmware): thermocouple telemetry + SSR control with watchdog"
-```
+No commit (firmware already committed).
 
 ---
 
@@ -126,8 +63,8 @@ git commit -m "feat(firmware): thermocouple telemetry + SSR control with watchdo
 - Test: `bridge/test/protocol.test.js`
 
 **Interfaces:**
-- Produces: `parseTelemetry(line: string) => {t:number, heat:0|1} | null` and `buildCommand(name: string, args?: any[]) => string | null`.
-  - `buildCommand('setHeat',[true])→'H1'`, `[false]→'H0'`, `('heartbeat')→'K'`, unknown→`null`.
+- Produces: `parseTelemetry(line: string) => object | null` (parsed telemetry object, or null if not valid JSON / not an object / missing `temperature` key — `temperature: null` is still valid). `buildCommand(name: string, args?: any[]) => string | null` returning a JSON serial line:
+  - `setHeat,[bool]→'{"heat":true|false}'`, `setSetpoint,[num]→'{"setpoint":N}'`, `estop→'{"estop":true}'`, `heartbeat→'{"ping":1}'`, unknown→`null`.
 
 - [ ] **Step 1: Create `bridge/package.json`**
 
@@ -164,23 +101,31 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { parseTelemetry, buildCommand } from '../src/protocol.js'
 
-test('parseTelemetry reads t and heat', () => {
-  assert.deepEqual(parseTelemetry('{"t":182.4,"heat":1}'), { t: 182.4, heat: 1 })
+test('parseTelemetry returns the parsed telemetry object', () => {
+  const line = '{"temperature":182.4,"setpoint":215,"actuators":{"heat":true},"enabled":true,"connected":true,"fault":null}'
+  const obj = parseTelemetry(line)
+  assert.equal(obj.temperature, 182.4)
+  assert.equal(obj.actuators.heat, true)
+  assert.equal(obj.fault, null)
 })
 
-test('parseTelemetry coerces heat to 0/1', () => {
-  assert.deepEqual(parseTelemetry('{"t":20,"heat":0}'), { t: 20, heat: 0 })
+test('parseTelemetry accepts null temperature (fault state)', () => {
+  const obj = parseTelemetry('{"temperature":null,"fault":"thermocouple"}')
+  assert.equal(obj.temperature, null)
+  assert.equal(obj.fault, 'thermocouple')
 })
 
-test('parseTelemetry rejects junk and missing temperature', () => {
+test('parseTelemetry rejects junk and lines without temperature', () => {
   assert.equal(parseTelemetry('not json'), null)
-  assert.equal(parseTelemetry('{"heat":1}'), null)
+  assert.equal(parseTelemetry('{"setpoint":215}'), null)
 })
 
-test('buildCommand maps setHeat and heartbeat', () => {
-  assert.equal(buildCommand('setHeat', [true]), 'H1')
-  assert.equal(buildCommand('setHeat', [false]), 'H0')
-  assert.equal(buildCommand('heartbeat'), 'K')
+test('buildCommand emits JSON serial lines', () => {
+  assert.equal(buildCommand('setHeat', [true]), '{"heat":true}')
+  assert.equal(buildCommand('setHeat', [false]), '{"heat":false}')
+  assert.equal(buildCommand('setSetpoint', [215]), '{"setpoint":215}')
+  assert.equal(buildCommand('estop'), '{"estop":true}')
+  assert.equal(buildCommand('heartbeat'), '{"ping":1}')
   assert.equal(buildCommand('bogus'), null)
 })
 ```
@@ -201,16 +146,20 @@ export function parseTelemetry(line) {
     return null
   }
   if (typeof obj !== 'object' || obj === null) return null
-  if (typeof obj.t !== 'number') return null
-  return { t: obj.t, heat: obj.heat ? 1 : 0 }
+  if (!('temperature' in obj)) return null
+  return obj
 }
 
 export function buildCommand(name, args = []) {
   switch (name) {
     case 'setHeat':
-      return args[0] ? 'H1' : 'H0'
+      return JSON.stringify({ heat: !!args[0] })
+    case 'setSetpoint':
+      return JSON.stringify({ setpoint: Number(args[0]) })
+    case 'estop':
+      return JSON.stringify({ estop: true })
     case 'heartbeat':
-      return 'K'
+      return JSON.stringify({ ping: 1 })
     default:
       return null
   }
@@ -228,7 +177,7 @@ Expected: PASS, 4 tests.
 cd /Users/Work_tmp/Julian/hmi-tostado
 printf 'node_modules/\n.env\n' > bridge/.gitignore
 git add bridge/package.json bridge/package-lock.json bridge/.gitignore bridge/src/protocol.js bridge/test/protocol.test.js
-git commit -m "feat(bridge): telemetry/command protocol module with tests"
+git commit -m "feat(bridge): JSON telemetry/command protocol module with tests"
 ```
 
 ---
@@ -241,8 +190,7 @@ git commit -m "feat(bridge): telemetry/command protocol module with tests"
 - Test: `bridge/test/mockSerial.test.js`
 
 **Interfaces:**
-- Consumes: nothing.
-- Produces: `createSerialLink({port,baud}, {onLine, onStatus}) => { write(str), close() }`. When `port === 'mock'`, returns a synthetic source (no hardware) that emits telemetry lines on an interval and reflects `H1`/`H0` writes into its `heat` field. `write` appends `\n` for the real port; mock parses the raw string.
+- Produces: `createSerialLink({port,baud}, {onLine, onStatus}) => { write(str), close() }`. When `port === 'mock'`, returns a synthetic source that **emulates the firmware's closed loop**: emits the telemetry JSON shape on an interval and responds to `{"heat"}`/`{"setpoint"}`/`{"estop"}` writes. The mock also exposes `tick()` so tests can step deterministically.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -253,27 +201,32 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createMockSerial } from '../src/mockSerial.js'
 
-test('mock emits telemetry lines and reflects heat commands', () => {
+test('mock emulates the closed loop and reflects commands', () => {
   const lines = []
   let status = null
   const link = createMockSerial({
     onLine: (l) => lines.push(l),
     onStatus: (s) => { status = s },
   })
-  assert.equal(status, true) // reports connected immediately
+  assert.equal(status, true)
 
-  link.tick() // advance one synthetic step
-  const first = JSON.parse(lines.at(-1))
-  assert.equal(first.heat, 0)
-  assert.equal(typeof first.t, 'number')
-
-  link.write('H1')
   link.tick()
-  assert.equal(JSON.parse(lines.at(-1)).heat, 1)
+  let last = JSON.parse(lines.at(-1))
+  assert.equal(last.enabled, false)
+  assert.equal(last.actuators.heat, false)
+  assert.equal(typeof last.temperature, 'number')
 
-  link.write('H0')
+  link.write('{"heat":true}')
   link.tick()
-  assert.equal(JSON.parse(lines.at(-1)).heat, 0)
+  last = JSON.parse(lines.at(-1))
+  assert.equal(last.enabled, true)
+  assert.equal(last.actuators.heat, true) // cold start: temp <= setpoint-2 -> SSR on
+
+  link.write('{"estop":true}')
+  link.tick()
+  last = JSON.parse(lines.at(-1))
+  assert.equal(last.actuators.heat, false)
+  assert.equal(last.fault, 'estop')
 
   link.close()
 })
@@ -286,17 +239,52 @@ Expected: FAIL — cannot find `../src/mockSerial.js`.
 
 - [ ] **Step 3: Write `bridge/src/mockSerial.js`**
 
-The `tick()` method is exposed so tests can step deterministically; the real interval calls the same function.
-
 ```js
+// Synthetic stand-in for the Arduino: emulates the firmware's closed-loop
+// bang-bang controller so the bridge + UI can run with no hardware. tick() is
+// exposed for deterministic tests; the real interval calls the same function.
 export function createMockSerial({ onLine, onStatus }) {
-  let heat = 0
+  let enabled = false
+  let setpoint = 215
+  let estop = false
   let temp = 22
+  let ssr = false
 
   const tick = () => {
-    const target = heat ? 220 : 22
+    if (!enabled || estop) ssr = false
+    else if (!ssr && temp <= setpoint - 2) ssr = true
+    else if (ssr && temp >= setpoint) ssr = false
+
+    const target = ssr ? setpoint + 30 : 22
     temp += (target - temp) * 0.05
-    onLine(JSON.stringify({ t: Math.round(temp * 10) / 10, heat }))
+
+    onLine(JSON.stringify({
+      temperature: Math.round(temp * 10) / 10,
+      setpoint,
+      actuators: { heat: ssr },
+      enabled,
+      connected: true,
+      fault: estop ? 'estop' : null,
+    }))
+  }
+
+  const apply = (line) => {
+    let m
+    try {
+      m = JSON.parse(line)
+    } catch {
+      return
+    }
+    if (m.heat != null) {
+      enabled = !!m.heat
+      if (enabled) estop = false
+    }
+    if (m.setpoint != null) setpoint = Number(m.setpoint)
+    if (m.estop) {
+      estop = true
+      enabled = false
+    }
+    // {"ping"} needs no handling in the mock
   }
 
   onStatus(true)
@@ -304,12 +292,7 @@ export function createMockSerial({ onLine, onStatus }) {
 
   return {
     tick,
-    write: (s) => {
-      const cmd = String(s).trim()
-      if (cmd === 'H1') heat = 1
-      else if (cmd === 'H0') heat = 0
-      // 'K' heartbeat: nothing to do in the mock
-    },
+    write: (s) => apply(String(s).trim()),
     close: () => clearInterval(id),
   }
 }
@@ -360,7 +343,7 @@ export function createSerialLink({ port, baud }, { onLine, onStatus }) {
 ```bash
 cd /Users/Work_tmp/Julian/hmi-tostado
 git add bridge/src/mockSerial.js bridge/src/serial.js bridge/test/mockSerial.test.js
-git commit -m "feat(bridge): serial link with deterministic mock mode"
+git commit -m "feat(bridge): serial link with closed-loop mock mode"
 ```
 
 ---
@@ -375,11 +358,11 @@ git commit -m "feat(bridge): serial link with deterministic mock mode"
 
 **Interfaces:**
 - Consumes: `buildCommand` (Task 2); `createSerialLink` (Task 3).
-- Produces: `startServer({port, serial, getStatus}) => { broadcast(obj), close() }`. Broadcasts JSON to all open clients; on a `{type:'command',name,args}` message it calls `serial.write(buildCommand(...))`.
+- Produces: `startServer({port, serial, getStatus}) => { broadcast(obj), close() }`. Broadcasts JSON to all open clients; on a `{type:'command',name,args}` message it calls `serial.write(buildCommand(name,args))` when that yields a non-null line.
 
 - [ ] **Step 1: Write the failing test**
 
-`bridge/test/server.test.js` — uses a fake serial link and a real `ws` client:
+`bridge/test/server.test.js`:
 
 ```js
 import { test } from 'node:test'
@@ -393,7 +376,7 @@ function fakeSerial() {
   return { writes: [], write(s) { this.writes.push(s) }, close() {} }
 }
 
-test('broadcasts telemetry and relays commands to serial', async () => {
+test('broadcasts telemetry and relays commands as JSON serial lines', async () => {
   const serial = fakeSerial()
   const server = startServer({ port: PORT, serial, getStatus: () => ({ connected: true, serial: true }) })
 
@@ -402,15 +385,13 @@ test('broadcasts telemetry and relays commands to serial', async () => {
   await new Promise((res) => ws.on('open', res))
   ws.on('message', (raw) => messages.push(JSON.parse(raw.toString())))
 
-  // client sends a command -> bridge writes to serial
   ws.send(JSON.stringify({ type: 'command', name: 'setHeat', args: [true] }))
   await new Promise((res) => setTimeout(res, 50))
-  assert.deepEqual(serial.writes, ['H1'])
+  assert.deepEqual(serial.writes, ['{"heat":true}'])
 
-  // server broadcast reaches the client
-  server.broadcast({ type: 'telemetry', data: { t: 100, heat: 1 } })
+  server.broadcast({ type: 'telemetry', data: { temperature: 100 } })
   await new Promise((res) => setTimeout(res, 50))
-  assert.ok(messages.some((m) => m.type === 'telemetry' && m.data.t === 100))
+  assert.ok(messages.some((m) => m.type === 'telemetry' && m.data.temperature === 100))
 
   ws.close()
   server.close()
@@ -519,7 +500,7 @@ cd /Users/Work_tmp/Julian/hmi-tostado/bridge
 cp .env.example .env
 npm start
 ```
-Expected: logs `[bridge] WebSocket on :8080 — serial=mock @ 115200`. In another terminal: `npx wscat -c ws://127.0.0.1:8080` → expect a `status` message then `telemetry` messages ~2/s. Send `{"type":"command","name":"setHeat","args":[true]}` → within ~10s telemetry `t` should start climbing. Ctrl-C both.
+Expected log: `[bridge] WebSocket on :8080 — serial=mock @ 115200`. In another terminal: `npx wscat -c ws://127.0.0.1:8080` → expect a `status` message then `telemetry` messages ~2/s. Send `{"type":"command","name":"setSetpoint","args":[40]}` then `{"type":"command","name":"setHeat","args":[true]}` → telemetry `enabled:true` and `temperature` climbs toward 40. Ctrl-C both.
 
 - [ ] **Step 8: Commit**
 
@@ -539,7 +520,7 @@ git commit -m "feat(bridge): WebSocket server + serial wiring entry point"
 - Modify: `package.json` (add `test` script)
 
 **Interfaces:**
-- Produces: `deriveTrend(prevTemp, newTemp, dtMs) => number` (°/min, clamped ±9.9, 0 if no prev/dt); `applyTelemetry(state, data) => state` (sets `temperature`, `actuators.heat`, `connected:true`, leaves everything else untouched).
+- Produces: `deriveTrend(prevTemp, newTemp, dtMs) => number` (°/min, clamped ±9.9, 0 if no prev/dt). `applyTelemetry(state, data) => state`: sets `temperature` (only when `data.temperature != null`), `setpoint`, `actuators.heat` ← **`data.enabled`** (commanded master enable, not the flickering SSR), `fault`, `connected:true`; leaves all other state untouched.
 
 - [ ] **Step 1: Add a test script to `package.json`**
 
@@ -563,20 +544,34 @@ test('deriveTrend returns 0 without a previous reading', () => {
 })
 
 test('deriveTrend converts °/ms to °/min and clamps', () => {
-  // +1°C over 1000ms = 60°/min, clamped to 9.9
-  assert.equal(deriveTrend(100, 101, 1000), 9.9)
-  // +0.05°C over 1000ms = 3.0°/min
-  assert.equal(deriveTrend(100, 100.05, 1000), 3)
+  assert.equal(deriveTrend(100, 101, 1000), 9.9)   // +60°/min clamped
+  assert.equal(deriveTrend(100, 100.05, 1000), 3)  // +3.0°/min
 })
 
-test('applyTelemetry merges temperature + heat, preserves other state', () => {
-  const state = { temperature: 20, trend: 0, actuators: { vacio: true, heat: false }, suction: { speed: 9 }, connected: false }
-  const next = applyTelemetry(state, { t: 182.4, heat: 1 })
+test('applyTelemetry merges fields and maps heat from enabled', () => {
+  const state = { temperature: 20, setpoint: 100, trend: 0, actuators: { vacio: true, heat: false }, suction: { speed: 9 }, connected: false }
+  const data = { temperature: 182.4, setpoint: 220, actuators: { heat: true }, enabled: true, connected: true, fault: null }
+  const next = applyTelemetry(state, data)
   assert.equal(next.temperature, 182.4)
-  assert.equal(next.actuators.heat, true)
-  assert.equal(next.actuators.vacio, true) // untouched
-  assert.equal(next.suction.speed, 9) // untouched
+  assert.equal(next.setpoint, 220)
+  assert.equal(next.actuators.heat, true)   // from enabled
+  assert.equal(next.actuators.vacio, true)  // untouched
+  assert.equal(next.suction.speed, 9)       // untouched
+  assert.equal(next.fault, null)
   assert.equal(next.connected, true)
+})
+
+test('applyTelemetry maps heat from enabled, not the flickering SSR', () => {
+  const state = { actuators: { heat: true }, temperature: 50 }
+  const next = applyTelemetry(state, { temperature: 50, enabled: false, actuators: { heat: true }, fault: null })
+  assert.equal(next.actuators.heat, false)
+})
+
+test('applyTelemetry keeps last temperature on a null reading and surfaces the fault', () => {
+  const state = { temperature: 150, actuators: {}, connected: true }
+  const next = applyTelemetry(state, { temperature: null, enabled: false, actuators: { heat: false }, fault: 'thermocouple' })
+  assert.equal(next.temperature, 150) // unchanged
+  assert.equal(next.fault, 'thermocouple')
 })
 ```
 
@@ -588,8 +583,8 @@ Expected: FAIL — cannot find `../src/lib/bridgeProtocol.js`.
 - [ ] **Step 4: Write `src/lib/bridgeProtocol.js`**
 
 ```js
-// Pure helpers for turning bridge telemetry into UI state. Framework-free so
-// they can be unit-tested with `node --test`.
+// Pure helpers turning bridge telemetry into UI state. Framework-free so they
+// can be unit-tested with `node --test`.
 
 const clamp = (n, min, max) => Math.max(min, Math.min(max, n))
 
@@ -600,19 +595,24 @@ export function deriveTrend(prevTemp, newTemp, dtMs) {
 }
 
 export function applyTelemetry(state, data) {
-  return {
+  const next = {
     ...state,
-    temperature: data.t,
-    actuators: { ...state.actuators, heat: !!data.heat },
+    setpoint: data.setpoint ?? state.setpoint,
+    // The UI's heat toggle reflects the COMMANDED master enable, not the SSR
+    // that flickers as the bang-bang controller holds temperature.
+    actuators: { ...state.actuators, heat: !!data.enabled },
+    fault: data.fault ?? null,
     connected: true,
   }
+  if (data.temperature != null) next.temperature = data.temperature
+  return next
 }
 ```
 
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `cd /Users/Work_tmp/Julian/hmi-tostado && npm test`
-Expected: PASS, 3 tests.
+Expected: PASS, 5 tests.
 
 - [ ] **Step 6: Commit**
 
@@ -631,11 +631,11 @@ git commit -m "feat(ui): telemetry merge + trend helpers with tests"
 - Test: `test/bridgeClient.test.js`
 
 **Interfaces:**
-- Produces: `createBridgeClient({url, onTelemetry, onStatus, WebSocketImpl?, heartbeatMs?}) => { sendCommand(name, args), close() }`. Auto-reconnects on close with exponential backoff; sends `{type:'command',name:'heartbeat'}` every `heartbeatMs` while open; routes incoming `telemetry`/`status` messages to callbacks. `WebSocketImpl` is injectable for testing (defaults to global `WebSocket`).
+- Produces: `createBridgeClient({url, onTelemetry, onStatus, WebSocketImpl?, heartbeatMs?, reconnectMs?}) => { sendCommand(name, args), close() }`. Auto-reconnects on close with exponential backoff; sends `{type:'command',name:'heartbeat'}` every `heartbeatMs` while open; routes incoming `telemetry`/`status` to callbacks. `WebSocketImpl` is injectable for tests (defaults to global `WebSocket`).
 
 - [ ] **Step 1: Write the failing test**
 
-`test/bridgeClient.test.js` — drives a fake WebSocket:
+`test/bridgeClient.test.js`:
 
 ```js
 import { test } from 'node:test'
@@ -669,9 +669,9 @@ test('routes telemetry and status to callbacks', () => {
   })
   const ws = registry.instances[0]
   ws._open()
-  ws._msg({ type: 'telemetry', data: { t: 50, heat: 0 } })
+  ws._msg({ type: 'telemetry', data: { temperature: 50, enabled: false } })
   ws._msg({ type: 'status', connected: true, serial: true })
-  assert.deepEqual(tele.at(-1), { t: 50, heat: 0 })
+  assert.equal(tele.at(-1).temperature, 50)
   assert.equal(status.serial, true)
   client.close()
 })
@@ -700,12 +700,12 @@ test('reconnects after an unexpected close', () => {
     onTelemetry: () => {},
     onStatus: () => {},
     heartbeatMs: 999999,
-    reconnectMs: 1, // fast for the test
+    reconnectMs: 1,
   })
   registry.instances[0]._open()
-  registry.instances[0].onclose() // simulate drop (not via close())
+  registry.instances[0].onclose() // simulate drop
   return new Promise((res) => setTimeout(() => {
-    assert.equal(registry.instances.length, 2) // a new socket was created
+    assert.equal(registry.instances.length, 2)
     client.close()
     res()
   }, 20))
@@ -721,7 +721,7 @@ Expected: FAIL — cannot find `../src/lib/bridgeClient.js`.
 
 ```js
 // Resilient WebSocket client to the laptop bridge. Auto-reconnects, sends a
-// periodic heartbeat (so the Arduino watchdog stays satisfied), and routes
+// periodic heartbeat (keeps the Arduino watchdog satisfied), and routes
 // telemetry/status to callbacks. WebSocketImpl is injectable for tests.
 
 export function createBridgeClient({
@@ -794,7 +794,7 @@ export function createBridgeClient({
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd /Users/Work_tmp/Julian/hmi-tostado && npm test`
-Expected: PASS (all bridgeProtocol + bridgeClient tests).
+Expected: PASS (bridgeProtocol + bridgeClient).
 
 - [ ] **Step 5: Commit**
 
@@ -813,25 +813,41 @@ git commit -m "feat(ui): resilient WebSocket bridge client with tests"
 
 **Interfaces:**
 - Consumes: `createBridgeClient` (Task 6), `applyTelemetry`/`deriveTrend` (Task 5).
-- Behavior: when **not** in `?sim` mode **and** `VITE_BRIDGE_URL` is set, the temperature + heat come from the bridge and `toggleHeat` sends `setHeat`. Otherwise the existing full simulator runs unchanged. Other controls (suction, resistances, etc.) stay simulated in both modes.
+- Behavior: when **not** `?sim` **and** `VITE_BRIDGE_URL` is set (LIVE mode), temperature/setpoint/heat-enable/fault come from the bridge; `toggleHeat`→`setHeat`, `setSetpoint`→`setSetpoint`, `emergencyStop`→`estop`. Otherwise the full simulator runs unchanged. Other controls stay simulated in both modes.
 
-- [ ] **Step 1: Add the live-mode flag near the top of the component**
+- [ ] **Step 1: Add imports + `fault` to INITIAL_STATE**
 
-In `src/lib/machineData.jsx`, inside `MachineDataProvider`, right after `stateRef.current = state` (around line 118), add:
+At the top of `src/lib/machineData.jsx`, after the existing React import line, add:
 
 ```jsx
-  // Live mode: real temperature + heat come from the laptop bridge over WebSocket.
-  // Falls back to the full simulator when ?sim is present or no bridge URL is configured.
+import { createBridgeClient } from './bridgeClient'
+import { applyTelemetry, deriveTrend } from './bridgeProtocol'
+```
+
+In `INITIAL_STATE`, next to `connected: true,` (line ~89), add:
+
+```jsx
+  fault: null,
+```
+
+- [ ] **Step 2: Add the live-mode flags + refs**
+
+Inside `MachineDataProvider`, right after `stateRef.current = state` (~line 118), add:
+
+```jsx
+  // Live mode: temperature/setpoint/heat/fault come from the laptop bridge.
+  // Falls back to the full simulator when ?sim is present or no bridge URL is set.
   const BRIDGE_URL = import.meta.env.VITE_BRIDGE_URL
   const SIM = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('sim')
   const LIVE = !SIM && !!BRIDGE_URL
   const prevTempRef = useRef(null)
   const prevTsRef = useRef(null)
+  const bridgeRef = useRef(null)
 ```
 
-- [ ] **Step 2: Gate the mock simulator so it pauses in live mode**
+- [ ] **Step 3: Gate the simulator's temperature drift in LIVE mode**
 
-The temperature drift block in the MOCK SIMULATOR `useEffect` (lines ~141-149) must not fight the real feed. Wrap the temperature portion so it only runs when not live. Change the block that currently reads:
+In the MOCK SIMULATOR `useEffect`, replace the temperature block (~lines 141-151):
 
 ```jsx
         // Temperature: drift toward target while heat is on, cool slightly when off.
@@ -847,7 +863,7 @@ The temperature drift block in the MOCK SIMULATOR `useEffect` (lines ~141-149) m
         next.chamberTemp = +(next.temperature + 35.8).toFixed(1)
 ```
 
-to:
+with:
 
 ```jsx
         // Temperature: in LIVE mode the bridge owns it; only simulate otherwise.
@@ -865,33 +881,27 @@ to:
         next.chamberTemp = +(next.temperature + 35.8).toFixed(1)
 ```
 
-Then add `LIVE` to that `useEffect`'s dependency array (it is currently `[]` on line ~156): change `}, [])` to `}, [LIVE])`.
+Then change that effect's dependency array from `}, [])` to `}, [LIVE])` (~line 156).
 
-- [ ] **Step 3: Add the bridge-client effect**
+- [ ] **Step 4: Add the bridge-client effect**
 
-Immediately after the temperature-history `useEffect` (after its closing `}, [])` around line 170), add a new effect. Add the imports at the top of the file too.
-
-At the top, alongside the existing React import, add:
+After the temperature-history `useEffect`'s closing `}, [])` (~line 170), add:
 
 ```jsx
-import { createBridgeClient } from './bridgeClient'
-import { applyTelemetry, deriveTrend } from './bridgeProtocol'
-```
-
-New effect:
-
-```jsx
-  // ---- LIVE BRIDGE: real temperature in, heat command out ----
+  // ---- LIVE BRIDGE: telemetry in, commands out ----
   useEffect(() => {
     if (!LIVE) return
     const client = createBridgeClient({
       url: BRIDGE_URL,
       onTelemetry: (data) => {
         setState((prev) => {
-          const now = Date.now()
-          const trend = deriveTrend(prevTempRef.current, data.t, prevTsRef.current ? now - prevTsRef.current : 0)
-          prevTempRef.current = data.t
-          prevTsRef.current = now
+          let trend = prev.trend
+          if (data.temperature != null) {
+            const now = Date.now()
+            trend = deriveTrend(prevTempRef.current, data.temperature, prevTsRef.current ? now - prevTsRef.current : 0)
+            prevTempRef.current = data.temperature
+            prevTsRef.current = now
+          }
           return { ...applyTelemetry(prev, data), trend }
         })
       },
@@ -905,15 +915,9 @@ New effect:
   }, [LIVE, BRIDGE_URL])
 ```
 
-And add the ref next to `prevTempRef` in Step 1:
+- [ ] **Step 5: Send commands in `toggleHeat`, `setSetpoint`, `emergencyStop`**
 
-```jsx
-  const bridgeRef = useRef(null)
-```
-
-- [ ] **Step 4: Make `toggleHeat` send the command in live mode**
-
-Replace the existing `toggleHeat` (lines ~197-200):
+Replace `toggleHeat` (~lines 197-200):
 
 ```jsx
   const toggleHeat = useCallback(
@@ -922,7 +926,7 @@ Replace the existing `toggleHeat` (lines ~197-200):
   )
 ```
 
-with a version that also tells the bridge (optimistic local update + command; the next telemetry reconciles to the SSR's real state):
+with:
 
 ```jsx
   const toggleHeat = useCallback(
@@ -936,23 +940,83 @@ with a version that also tells the bridge (optimistic local update + command; th
   )
 ```
 
-- [ ] **Step 5: Verify the build compiles**
+Replace `setSetpoint` (~lines 261-264):
+
+```jsx
+  const setSetpoint = useCallback(
+    (value) => setState((p) => ({ ...p, setpoint: clamp(Math.round(value), 0, 450) })),
+    [],
+  )
+```
+
+with:
+
+```jsx
+  const setSetpoint = useCallback(
+    (value) =>
+      setState((p) => {
+        const setpoint = clamp(Math.round(value), 0, 450)
+        if (bridgeRef.current) bridgeRef.current.sendCommand('setSetpoint', [setpoint])
+        return { ...p, setpoint }
+      }),
+    [],
+  )
+```
+
+Replace `emergencyStop` (~lines 271-281) — add the command, keep the existing local resets:
+
+```jsx
+  const emergencyStop = useCallback(
+    () =>
+      setState((p) => ({
+        ...p,
+        emergency: true,
+        actuators: { vacio: false, heat: false },
+        suction: { ...p.suction, running: false, targetSpeed: 0 },
+        resistances: p.resistances.map(() => ({ on: false, kw: 0 })),
+      })),
+    [],
+  )
+```
+
+with:
+
+```jsx
+  const emergencyStop = useCallback(
+    () =>
+      setState((p) => {
+        if (bridgeRef.current) bridgeRef.current.sendCommand('estop')
+        return {
+          ...p,
+          emergency: true,
+          actuators: { vacio: false, heat: false },
+          suction: { ...p.suction, running: false, targetSpeed: 0 },
+          resistances: p.resistances.map(() => ({ on: false, kw: 0 })),
+        }
+      }),
+    [],
+  )
+```
+
+> Note: the firmware latches e-stop; re-enabling heat (`toggleHeat` → `{"heat":true}`) clears the latch. The existing `clearEmergency` only clears the local banner — that's the intended prototype behavior.
+
+- [ ] **Step 6: Verify the build compiles**
 
 Run: `cd /Users/Work_tmp/Julian/hmi-tostado && npm run build`
 Expected: build succeeds, no errors.
 
-- [ ] **Step 6: End-to-end manual test against the mock bridge**
+- [ ] **Step 7: End-to-end manual test against the mock bridge**
 
-Terminal A: `cd bridge && npm start` (with `.env` `SERIAL_PORT=mock`).
+Terminal A: `cd bridge && npm start` (`.env` `SERIAL_PORT=mock`).
 Terminal B: `cd .. && VITE_BRIDGE_URL=ws://127.0.0.1:8080 npm run dev`.
-Open the dev URL (no `?sim`). Expected: Monitoreo temperature is driven by the mock (rises after pressing the heat toggle, since the mock heats toward 220°C); the connection indicator shows connected. Open with `?sim` appended → full simulator runs, bridge ignored.
+Open the dev URL (no `?sim`). Expected: temperature is driven by the mock; toggling heat (Monitoreo) + raising the setpoint (Ajustes) makes the temperature climb; the e-stop button drives `fault:"estop"` in telemetry (temperature stops climbing). Append `?sim` → full simulator runs, bridge ignored.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 cd /Users/Work_tmp/Julian/hmi-tostado
 git add src/lib/machineData.jsx
-git commit -m "feat(ui): drive temperature + heat from the bridge in live mode"
+git commit -m "feat(ui): drive temperature/setpoint/heat/e-stop from the bridge in live mode"
 ```
 
 ---
@@ -962,7 +1026,7 @@ git commit -m "feat(ui): drive temperature + heat from the bridge in live mode"
 **Files:**
 - Create: `bridge/README.md`
 
-**Interfaces:** none (operational setup). Produces a stable `wss://` hostname the Vercel build points at via `VITE_BRIDGE_URL`.
+**Interfaces:** none (operational). Produces a stable `wss://` hostname the Vercel build points at via `VITE_BRIDGE_URL`.
 
 - [ ] **Step 1: Install cloudflared and create the tunnel**
 
@@ -978,7 +1042,7 @@ Expected: a tunnel UUID + credentials file under `~/.cloudflared/`.
 ```bash
 cloudflared tunnel route dns hmi-tostado roaster.<your-domain>
 ```
-Then create `~/.cloudflared/config.yml`:
+Create `~/.cloudflared/config.yml`:
 
 ```yaml
 tunnel: hmi-tostado
@@ -994,14 +1058,14 @@ ingress:
 ```bash
 cloudflared tunnel run hmi-tostado
 ```
-With `bridge` running in mock mode, verify from any network: `npx wscat -c wss://roaster.<your-domain>` → expect `status` + `telemetry` frames. This confirms the cert + tunnel + WebSocket upgrade all work.
+With `bridge` running in mock mode, from any network: `npx wscat -c wss://roaster.<your-domain>` → expect `status` + `telemetry` frames. Confirms cert + tunnel + WebSocket upgrade.
 
 - [ ] **Step 4: Point Vercel at the tunnel**
 
-In the Vercel project (origendelvalle) → Settings → Environment Variables, add:
-`VITE_BRIDGE_URL = wss://roaster.<your-domain>` (Production). Redeploy.
+Vercel project (origendelvalle) → Settings → Environment Variables → add
+`VITE_BRIDGE_URL = wss://roaster.<your-domain>` (Production), then redeploy.
 
-- [ ] **Step 5: Write `bridge/README.md`** documenting the run sequence
+- [ ] **Step 5: Write `bridge/README.md`**
 
 ````markdown
 # HMI Tostado — Bridge
@@ -1013,25 +1077,29 @@ Cloudflare-tunneled WebSocket; relays UI commands back to the Arduino.
 
 1. `cp .env.example .env` and set `SERIAL_PORT` (or leave `mock` for no hardware).
 2. `npm install`
-3. `npm start`                       # bridge on ws://localhost:8080
+3. `npm start`                            # bridge on ws://localhost:8080
 4. `cloudflared tunnel run hmi-tostado`   # exposes wss://roaster.<domain>
 
-The Vercel UI connects automatically via the `VITE_BRIDGE_URL` env var
-(set to `wss://roaster.<domain>` in the Vercel dashboard).
+The Vercel UI connects via the `VITE_BRIDGE_URL` env var (set to
+`wss://roaster.<domain>` in the Vercel dashboard).
+
+## Protocol
+- Telemetry (Arduino→UI): `{"temperature":…,"setpoint":…,"actuators":{"heat":…},"enabled":…,"connected":true,"fault":…}`
+- Commands (UI→Arduino): `{"heat":bool}`, `{"setpoint":num}`, `{"estop":true}`, `{"ping":1}`
 
 ## Modes
-- `SERIAL_PORT=mock` — synthetic telemetry, no hardware (dev/testing).
+- `SERIAL_PORT=mock` — synthetic closed-loop telemetry, no hardware.
 - `SERIAL_PORT=/dev/tty.usbmodemXXXX` — real Arduino.
 
 ## Safety
-The Arduino runs a 5s watchdog: if serial goes silent it turns the SSR off.
-The UI sends a heartbeat every 2s while connected. A physical stove cutoff is
-still required — software is not the only line of defense.
+The firmware runs a 5s comms watchdog plus overtemp (260°C), thermocouple-fault,
+and e-stop gates that force the SSR off. The UI sends a heartbeat every 2s. A
+physical stove cutoff is still required — software is not the only line of defense.
 ````
 
 - [ ] **Step 6: Final end-to-end test on the tablet**
 
-With bridge (mock) + tunnel running, open `https://origendelvalle.vercel.app` on the Redmi tablet. Expected: live temperature updates, heat toggle changes mock temperature direction, connection indicator green.
+With bridge (mock) + tunnel running, open `https://origendelvalle.vercel.app` on the Redmi tablet. Expected: live temperature, heat toggle + setpoint drive the mock, e-stop works, connection indicator green.
 
 - [ ] **Step 7: Commit**
 
@@ -1049,24 +1117,28 @@ git commit -m "docs(bridge): Cloudflare Tunnel setup + run instructions"
 
 - [ ] **Step 1: Connect & configure**
 
-Flash Task 1's sketch, plug the Arduino into the laptop, find the port (`ls /dev/tty.usbmodem*` on macOS), set it in `bridge/.env` (`SERIAL_PORT=/dev/tty.usbmodemXXXX`), restart `npm start`.
+Flash done in Task 1. Plug the Arduino into the laptop, find the port (`ls /dev/tty.usbmodem*` on macOS), set `SERIAL_PORT` in `bridge/.env`, restart `npm start`.
 
 - [ ] **Step 2: Verify real telemetry end-to-end**
 
-With bridge + tunnel running and the tablet on the Vercel URL: confirm the displayed temperature matches the thermocouple's real reading (cross-check against a reference thermometer). Press the heat toggle → confirm the **physical SSR/stove** switches and telemetry `heat` reflects it.
+With bridge + tunnel running and the tablet on the Vercel URL: confirm the displayed temperature matches the thermocouple (cross-check a reference thermometer). Set a setpoint above ambient and enable heat → confirm the **physical SSR/stove** switches and telemetry `actuators.heat` cycles as temperature approaches setpoint.
 
-- [ ] **Step 3: Verify the watchdog with real hardware**
+- [ ] **Step 3: Verify the watchdog with real hardware (critical safety check)**
 
-Turn heat on, then kill the bridge (Ctrl-C in Terminal A). Expected: within ~5s the SSR turns the stove **off** on its own (Arduino watchdog). This is the critical safety check — do not skip.
+Enable heat, then kill the bridge (Ctrl-C). Expected: within ~5 s the firmware sets `fault:"comms"` and the SSR turns the stove **off**. Do not skip.
 
-- [ ] **Step 4: Validate against the simulation**
+- [ ] **Step 4: Verify e-stop + overtemp gates**
 
-Run a short roast; confirm the live curve in the UI looks physically plausible vs. the previous simulated curve. Note any sensor offset for later calibration.
+Press e-stop in the UI → SSR off, `fault:"estop"`; re-enable heat to clear. (Overtemp gate at 260 °C is a firmware ceiling — verify only if safely reachable on the bench.)
+
+- [ ] **Step 5: Validate against the simulation**
+
+Run a short roast; confirm the live curve looks physically plausible. Note any sensor offset for later calibration.
 
 ---
 
 ## Notes for the implementer
 
-- **Run order:** Tasks 2→7 are pure software and fully testable with the mock (no hardware). Task 1 (firmware) can be done any time before Task 9. Tasks 8-9 are operational/manual.
-- **No new test framework:** everything uses `node --test`. The UI's React rendering is verified manually (Step 6 of Task 7) — the testable logic was deliberately extracted into framework-free modules (Tasks 5-6).
-- **Indentation/style:** the UI JS omits semicolons and uses single quotes; the bridge is a fresh Node project — match the UI style there too for consistency.
+- **Run order:** Tasks 2→7 are pure software, fully testable with the mock (no hardware). Task 1 (flash) any time before Task 9. Tasks 8-9 are operational/manual.
+- **No new test framework:** everything uses `node --test`. React rendering is verified manually (Task 7 Step 7); testable logic was extracted into framework-free modules (Tasks 5-6).
+- **Protocol is JSON both ways** — matches the provided firmware exactly. The bridge's `buildCommand` is the single translation point from WS command names to serial JSON lines.
