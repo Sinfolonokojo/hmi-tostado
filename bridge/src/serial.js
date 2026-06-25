@@ -14,7 +14,7 @@ export function createSerialLink({ port, baud }, { onLine, onStatus }) {
     const parser = sp.pipe(new ReadlineParser({ delimiter: '\n' }))
     parser.on('data', (d) => onLine(String(d).trim()))
     sp.on('open', () => onStatus(true))
-    sp.on('error', () => {}) // 'close' handles reconnect
+    sp.on('error', (err) => console.warn(`[bridge] serial error: ${err.message}`)) // 'close' handles reconnect
     sp.on('close', () => {
       onStatus(false)
       if (!closed) reconnectTimer = setTimeout(open, 2000) // auto-reconnect

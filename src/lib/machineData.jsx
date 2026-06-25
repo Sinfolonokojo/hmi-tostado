@@ -200,7 +200,7 @@ export function MachineDataProvider({ children }) {
           return { ...applyTelemetry(prev, data), trend }
         })
       },
-      onStatus: (s) => setState((prev) => ({ ...prev, connected: !!s.connected })),
+      onStatus: (s) => setState((prev) => ({ ...prev, connected: !!(s.connected && s.serial) })),
     })
     bridgeRef.current = client
     return () => {
@@ -234,15 +234,11 @@ export function MachineDataProvider({ children }) {
     [],
   )
 
-  const toggleHeat = useCallback(
-    () =>
-      setState((p) => {
-        const heat = !p.actuators.heat
-        if (bridgeRef.current) bridgeRef.current.sendCommand('setHeat', [heat])
-        return { ...p, actuators: { ...p.actuators, heat } }
-      }),
-    [],
-  )
+  const toggleHeat = useCallback(() => {
+    const heat = !stateRef.current.actuators.heat
+    if (bridgeRef.current) bridgeRef.current.sendCommand('setHeat', [heat])
+    setState((p) => ({ ...p, actuators: { ...p.actuators, heat } }))
+  }, [])
 
   const setFan = useCallback(
     (percent) =>
@@ -316,20 +312,16 @@ export function MachineDataProvider({ children }) {
     [],
   )
 
-  const emergencyStop = useCallback(
-    () =>
-      setState((p) => {
-        if (bridgeRef.current) bridgeRef.current.sendCommand('estop')
-        return {
-          ...p,
-          emergency: true,
-          actuators: { vacio: false, heat: false },
-          suction: { ...p.suction, running: false, targetSpeed: 0 },
-          resistances: p.resistances.map(() => ({ on: false, kw: 0 })),
-        }
-      }),
-    [],
-  )
+  const emergencyStop = useCallback(() => {
+    if (bridgeRef.current) bridgeRef.current.sendCommand('estop')
+    setState((p) => ({
+      ...p,
+      emergency: true,
+      actuators: { vacio: false, heat: false },
+      suction: { ...p.suction, running: false, targetSpeed: 0 },
+      resistances: p.resistances.map(() => ({ on: false, kw: 0 })),
+    }))
+  }, [])
 
   const clearEmergency = useCallback(() => setState((p) => ({ ...p, emergency: false })), [])
 
