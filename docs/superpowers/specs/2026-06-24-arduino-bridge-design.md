@@ -1,10 +1,13 @@
-# Diseño — Conexión Arduino ↔ UI (HMI Tostado)
+# Diseño — Conexión Arduino ↔ UI (HMI Tostado) · Prototipo
 
 **Fecha:** 24 de junio de 2026
 **Proyecto:** HMI Tostado (tostadora de café industrial)
-**Objetivo:** Reemplazar los datos simulados de la UI por datos reales de sensores del
-Arduino, y permitir que la UI envíe comandos de control (calor, flujo, succión,
-resistencias, paro de emergencia) de vuelta al Arduino.
+**Objetivo (prototipo):** Conectar el hardware real mínimo a la UI:
+- **1 entrada:** sensor de temperatura → mostrado en vivo + curva de tostado real.
+- **1 salida:** relé SSR que enciende/apaga la estufa → controlado desde el botón de calor.
+
+El resto de controles de la UI (succión, 4 resistencias, flujo de aire, motores,
+setpoint) **permanecen simulados** en esta fase; no hay hardware detrás de ellos todavía.
 
 ---
 
@@ -12,143 +15,124 @@ resistencias, paro de emergencia) de vuelta al Arduino.
 
 | Pieza | Estado |
 | --- | --- |
-| **UI** | React + Vite + Tailwind, desplegada en `https://origendelvalle.vercel.app`. Toda la app lee/escribe a través de un único hook `useMachineData()` en `src/lib/machineData.jsx`. |
-| **Tablet** | Redmi Pad Pro 2 (Android). La UI corre en el navegador (Chrome). |
-| **Microcontrolador** | Arduino Uno/Nano/Mega — **solo USB serial, sin red**. |
-| **Control** | Bidireccional: la UI muestra sensores **y** envía comandos. |
+| **UI** | React + Vite + Tailwind en `https://origendelvalle.vercel.app`. Toda la app lee/escribe por un único hook `useMachineData()` en `src/lib/machineData.jsx`. |
+| **Tablet** | Redmi Pad Pro 2 (Android), navegador Chrome. |
+| **Microcontrolador** | Arduino Uno/Nano/Mega — solo USB serial, sin red. |
+| **Hardware real** | 1 sensor de temperatura (entrada) + 1 relé SSR para la estufa (salida). |
+| **Seguridad** | No es preocupación en el prototipo (sin autenticación). |
 
-Restricciones duras que definen la arquitectura:
+Restricciones duras:
+1. **Arduino sin red** → necesita un puente (laptop) que lea el serial y lo exponga.
+2. **Chrome en Android no soporta Web Serial** → no hay USB directo al navegador.
+3. **UI en Vercel es HTTPS** → debe conectarse por `wss://` con cert de confianza. Por eso
+   se usa un **túnel** (Cloudflare/ngrok) que provee el certificado real.
 
-1. **Arduino no tiene red** → necesita un puente (laptop) que lea el serial USB y lo
-   exponga a la red.
-2. **Chrome en Android no soporta Web Serial** → no se puede conectar el Arduino por
-   USB directo al navegador del tablet.
-3. **La UI en Vercel es HTTPS** → el navegador prohíbe que una página segura abra una
-   conexión `ws://`/`http://` insegura hacia un dispositivo local (mixed content). La
-   conexión al puente **debe** ser `wss://` con un certificado de confianza.
-4. **El puente queda expuesto a Internet por el túnel** → la conexión de control debe
-   estar **autenticada** (token compartido).
+> **Nota de sensor:** la temperatura de tostado supera los 200 °C, así que el sensor debe
+> ser un **termopar tipo K con amplificador MAX6675/MAX31855** (un LM35/analógico no llega).
+> El protocolo no cambia según el sensor; solo el código de lectura del sketch.
 
 ---
 
 ## 2. Arquitectura
 
 ```
-┌────────────────────┐   wss:// (cert real,    ┌──────────────────────────┐   USB serial   ┌─────────────┐
-│  Tablet (Chrome)   │   vía túnel)            │  Laptop — Bridge (Node)  │   (JSON/cmd)   │   Arduino   │
-│  UI desde Vercel   │ ◀─────────────────────▶ │  • serialport            │ ◀────────────▶ │  sensores   │
-│  origendelvalle... │   telemetría ↓          │  • WebSocket (ws) + auth │   115200 baud  │  + relés    │
-└────────────────────┘   comandos   ↑          │  • Cloudflare/ngrok tun. │                └─────────────┘
+┌────────────────────┐   wss:// (cert real,    ┌──────────────────────────┐   USB serial   ┌──────────────┐
+│  Tablet (Chrome)   │   vía túnel)            │  Laptop — Bridge (Node)  │                │   Arduino    │
+│  UI desde Vercel   │ ◀─────────────────────▶ │  • serialport            │ ◀────────────▶ │  termopar in │
+│  origendelvalle... │   temperatura ↓         │  • WebSocket (ws)        │   115200 baud  │  SSR estufa  │
+└────────────────────┘   calor on/off ↑        │  • Cloudflare/ngrok tun. │                └──────────────┘
                                                 └──────────────────────────┘
 ```
 
 **Flujo de datos:**
-- **Telemetría (Arduino → UI):** Arduino emite una línea JSON cada ~500 ms → el puente
-  la parsea y la difunde por WebSocket a los tablets conectados → la UI la fusiona en su
-  estado.
-- **Comandos (UI → Arduino):** la UI envía un mensaje WebSocket `{type:"command", ...}`
-  → el puente lo traduce a una línea de comando compacta y la escribe al serial →
-  el Arduino acciona el pin correspondiente y **reporta el estado real** en la siguiente
-  línea de telemetría (la UI refleja la verdad, no solo lo comandado).
+- **Temperatura (Arduino → UI):** Arduino emite una línea JSON cada ~500 ms con la
+  temperatura → el puente la difunde por WebSocket → la UI la fusiona en su estado y
+  alimenta la curva de tostado.
+- **Calor (UI → Arduino):** el botón de calor envía `{type:"command", name:"toggleHeat"}`
+  → el puente escribe `H1`/`H0` al serial → el Arduino activa/desactiva el SSR y **reporta
+  el estado real** del relé en la siguiente telemetría.
 
-La UI **sigue cargándose desde Vercel**. Solo la conexión de datos en vivo va al puente
-a través del túnel.
+La UI **sigue cargándose desde Vercel**; solo la conexión de datos en vivo va al puente.
 
 ---
 
 ## 3. Componentes
 
 ### 3.1 Sketch de Arduino (`firmware/hmi_tostado.ino` — nuevo)
-- Lee sensores (p. ej. termopar vía MAX6675/MAX31855 para temperatura; entradas para
-  succión/vibración según el hardware físico).
-- Cada ~500 ms imprime **una línea JSON** por `Serial` (115200 baud).
-- Lee líneas de comando entrantes y acciona relés (calor, resistencias) y salidas PWM
-  (flujo de aire, succión).
-- **Watchdog de seguridad:** si no recibe un comando/heartbeat válido en `N` segundos
-  (por defecto 5 s), apaga el calor y las resistencias por seguridad.
-- Reporta el **estado real** de cada actuador en la telemetría.
+- Lee el termopar (MAX6675/MAX31855) cada ~500 ms.
+- Imprime **una línea JSON** por `Serial` (115200 baud): `{"t":182.4,"heat":1}`.
+- Lee comandos entrantes (`H1`/`H0`) y acciona el pin del SSR.
+- **Watchdog de seguridad (SE MANTIENE — es una estufa):** si no recibe un comando o
+  heartbeat válido en `5 s`, apaga el SSR. Cubre laptop colgada / WiFi caída / túnel caído.
+- Reporta el estado real del SSR (`heat`) en cada telemetría.
 
-### 3.2 Puente / Bridge (`bridge/` — proyecto Node nuevo)
+### 3.2 Puente / Bridge (`bridge/` — proyecto Node nuevo, ~100 líneas)
 - `serialport` + `@serialport/parser-readline` para el enlace USB.
-- `ws` para el servidor WebSocket.
-- **Autenticación:** exige un token compartido (`BRIDGE_TOKEN`) en el primer mensaje;
-  cierra la conexión si no coincide.
-- Túnel (Cloudflare Tunnel recomendado por hostname estable y cert real; ngrok como
-  alternativa) que expone el WebSocket en una dirección `wss://` pública estable.
-- Reconexión automática del serial si el Arduino se desconecta; difunde el estado de
-  conexión a la UI.
-- Script de configuración (`.env`): `SERIAL_PORT`, `BAUD`, `WS_PORT`, `BRIDGE_TOKEN`.
+- `ws` para el servidor WebSocket (sin autenticación en el prototipo).
+- Túnel (ngrok rápido para prototipo; Cloudflare si se quiere hostname estable) que expone
+  el WebSocket en una dirección `wss://` pública.
+- Reconexión automática del serial; difunde estado de conexión a la UI.
+- Configuración por `.env`: `SERIAL_PORT`, `BAUD`, `WS_PORT`.
 
-### 3.3 Cambio en la UI (`src/lib/machineData.jsx` — único archivo de la UI)
-- Reemplaza el simulador mock por un **cliente WebSocket**:
-  - Al recibir telemetría → fusiona en el estado (mismo shape actual).
-  - Las funciones de comando (`toggleHeat`, `setFan`, `setSuctionSpeed`, `toggleResistance`,
-    `setSetpoint`, `emergencyStop`, etc.) envían un mensaje WebSocket **y** hacen una
-    actualización optimista local; el estado real se reconcilia con la telemetría.
-  - Maneja `connected:false` en caída de WS, con **reconexión automática**.
-- **Modo simulador conservado** como fallback (`?sim` en la URL o variable de entorno)
-  para seguir desarrollando la UI sin hardware.
-- La dirección `wss://` del puente se configura con una variable de entorno de Vite
-  (`VITE_BRIDGE_URL`) definida en el panel de Vercel, y el token con `VITE_BRIDGE_TOKEN`.
+### 3.3 Cambio en la UI (`src/lib/machineData.jsx` — único archivo)
+- Cliente WebSocket que reemplaza **solo** la parte real del simulador:
+  - Telemetría entrante → actualiza `temperature` (y `heat` real del actuador). El `trend`
+    (°/min) se **deriva** de lecturas sucesivas (no lo envía el Arduino).
+  - `toggleHeat` → envía comando WebSocket + actualización optimista; se reconcilia con la
+    telemetría real.
+  - La curva de tostado (`tempHistory`) se alimenta de la temperatura **real**.
+  - Maneja `connected:false` con **reconexión automática**.
+- **El resto del simulador permanece** para succión, resistencias, flujo, motores y
+  setpoint (sin hardware en esta fase).
+- **Modo simulador completo** conservado como fallback (`?sim` en la URL) para desarrollo
+  sin hardware.
+- Dirección `wss://` del puente vía variable de entorno de Vite (`VITE_BRIDGE_URL`) en el
+  panel de Vercel.
 
 ---
 
 ## 4. Protocolos
 
-### 4.1 Arduino → Laptop (serial, JSON por línea, claves cortas)
+### 4.1 Arduino → Laptop (serial, JSON por línea)
 ```json
-{"t":182.4,"trend":2.1,"suct":45,"vib":12,"r":[1,1,0,0],"heat":1,"fan":65,"sp":215}
+{"t":182.4,"heat":1}
 ```
-- `t` temperatura °C, `trend` °/min, `suct` velocidad succión 0–100, `vib` vibración %,
-  `r` estado de las 4 resistencias, `heat` calor on/off, `fan` flujo %, `sp` setpoint.
+- `t` temperatura °C (real, del termopar). `heat` estado real del SSR (1/0).
 
-### 4.2 Laptop → Arduino (líneas de comando compactas, fáciles de parsear en Uno)
+### 4.2 Laptop → Arduino (líneas de comando compactas)
 | Comando | Significado |
 | --- | --- |
-| `H1` / `H0` | Calor on / off |
-| `F65` | Flujo de aire 65 % |
-| `S45` | Velocidad de succión 45 |
-| `R2:1` | Resistencia índice 2 → encender (`:0` apagar) |
-| `P215` | Setpoint 215 °C |
-| `E` | **Paro de emergencia** (apaga todo) |
+| `H1` / `H0` | Encender / apagar el SSR (calor) |
 | `K` | Heartbeat (mantiene vivo el watchdog) |
 
 ### 4.3 Tablet ⇄ Laptop (WebSocket JSON)
-- **Auth (primer mensaje del cliente):** `{type:"auth", token:"<BRIDGE_TOKEN>"}`
-- **Telemetría (abajo):** `{type:"telemetry", data:{…}}`
-- **Comando (arriba):** `{type:"command", name:"setFan", args:[65]}`
+- **Telemetría (abajo):** `{type:"telemetry", data:{t:182.4, heat:1}}`
+- **Comando (arriba):** `{type:"command", name:"toggleHeat"}`
 - **Estado (abajo):** `{type:"status", connected:true, serial:true}`
 
 ---
 
-## 5. Manejo de errores y seguridad
+## 5. Manejo de errores y seguridad operativa
 
-- **Caída de WebSocket** → la UI pone `connected:false`, muestra un banner y reconecta
-  automáticamente con backoff.
+- **Caída de WebSocket** → UI pone `connected:false`, muestra banner y reconecta con backoff.
 - **Caída del serial** → el puente reintenta abrir el puerto y reporta `serial:false`.
-- **Watchdog del Arduino** → apaga calor/resistencias si no hay heartbeat válido en
-  `N` segundos (cubre laptop colgada, WiFi caída o túnel caído). La UI envía un
-  heartbeat periódico mientras está conectada.
-- **Autenticación obligatoria** → sin token válido, el puente cierra la conexión. Evita
-  que un tercero con la URL del túnel controle la máquina.
-  - **Límite honesto:** como la UI vive en Vercel, el token (`VITE_BRIDGE_TOKEN`) queda
-    embebido en el bundle del cliente y es legible por cualquiera que abra DevTools. Por
-    tanto protege contra escaneo aleatorio de Internet que tope con la URL del túnel,
-    **no** contra un atacante determinado que inspeccione la app. Para endurecerlo más
-    adelante: mantener la URL del túnel sin publicar y/o rotar el token, o (mejor) servir
-    la UI desde el laptop en la LAN para que el control nunca salga a Internet.
-- **Paro de emergencia** → ruta de comando de máxima prioridad.
-- **Recomendación fuerte (fuera de software):** un **botón físico de paro de emergencia**
-  en la máquina. Un paro por WiFi/Internet nunca debe ser el único.
+- **Watchdog del Arduino (clave)** → apaga el SSR si no hay heartbeat en `5 s`. La UI envía
+  un heartbeat periódico mientras está conectada. Esto evita dejar la estufa encendida si
+  algo en la cadena falla.
+- **Recomendación fuera de software:** un interruptor/paro físico en la estufa. Un control
+  por WiFi/Internet nunca debe ser el único medio de apagado.
+
+*(Sin autenticación de aplicación: es un prototipo. Si más adelante deja de serlo, lo más
+sano es servir la UI desde el laptop en la LAN para que el control no salga a Internet.)*
 
 ---
 
 ## 6. Pruebas
 
-- **Arduino falso (`bridge/mock-arduino.js`):** emite el mismo JSON por un puerto serial
-  virtual para probar puente + UI sin hardware.
-- **Modo `?sim` de la UI:** conserva el simulador para desarrollo offline.
-- **Validación de lecturas reales** contra la simulación una vez conectado el hardware.
+- **Arduino falso (`bridge/mock-arduino.js`):** emite `{"t":...,"heat":...}` por un puerto
+  serial virtual para probar puente + UI sin hardware.
+- **Modo `?sim` de la UI:** conserva el simulador completo para desarrollo offline.
+- **Validación:** comparar lecturas reales del termopar contra un termómetro de referencia.
 
 ---
 
@@ -156,19 +140,22 @@ a través del túnel.
 
 | Decisión | Elección | Razón |
 | --- | --- | --- |
+| Hardware real (prototipo) | 1 temp in + 1 SSR out | Alcance real confirmado |
+| Sensor de temperatura | Termopar tipo K + MAX6675/MAX31855 | Tostado supera 200 °C |
 | Microcontrolador | Arduino Uno/Nano/Mega (USB) | Hardware existente |
-| Puente | Laptop (Node) | Disponible; corre serial + WS + túnel |
-| Origen de la UI | **Vercel** (sin cambio de URL) | Requisito del usuario |
-| Enlace seguro | **Túnel con cert real** (Cloudflare/ngrok) | Evita certs self-signed en el tablet; hostname estable |
-| Autenticación | Token compartido en WS | El túnel expone el control a Internet |
-| Watchdog | Sí, apaga calor en pérdida de comms | Seguridad: elementos calefactores |
+| Puente | Laptop (Node) | Corre serial + WS + túnel |
+| Origen de la UI | Vercel (sin cambio de URL) | Requisito del usuario |
+| Enlace seguro | Túnel con cert real (ngrok/Cloudflare) | Vercel es HTTPS; evita certs self-signed |
+| Autenticación | Ninguna | Prototipo |
+| Watchdog | Sí (apaga SSR en pérdida de comms) | Seguridad: es una estufa |
+| Controles no-hardware | Permanecen simulados | Sin hardware detrás aún |
 | Modo simulador | Conservado como fallback | Desarrollo offline |
 
 ---
 
 ## 8. Fuera de alcance (YAGNI por ahora)
 
-- Persistencia/base de datos de telemetría histórica en el puente (la UI ya exporta
-  CSV/XLSX/PNG por lote).
+- Hardware para succión, resistencias, flujo, motores, setpoint (siguen simulados).
+- Autenticación / cuentas de usuario.
+- Persistencia de telemetría histórica en el puente (la UI ya exporta CSV/XLSX/PNG).
 - Múltiples tostadoras / multi-dispositivo.
-- Cuentas de usuario / roles (un solo token compartido por ahora).
