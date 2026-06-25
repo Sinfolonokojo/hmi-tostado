@@ -12,7 +12,9 @@ export function deriveTrend(prevTemp, newTemp, dtMs) {
 export function applyTelemetry(state, data) {
   const next = {
     ...state,
-    setpoint: data.setpoint ?? state.setpoint,
+    // setpoint is intentionally NOT merged from telemetry: the slider is
+    // cosmetic and UI-owned (prototype scope, 2026-06-24), so the firmware's
+    // own setpoint must not clobber what the operator set on screen.
     // The UI's heat toggle reflects the COMMANDED master enable, not the SSR
     // that flickers as the bang-bang controller holds temperature.
     actuators: { ...state.actuators, heat: !!data.enabled },

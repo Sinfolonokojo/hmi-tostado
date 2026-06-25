@@ -16,7 +16,7 @@ test('applyTelemetry merges fields and maps heat from enabled', () => {
   const data = { temperature: 182.4, setpoint: 220, actuators: { heat: true }, enabled: true, connected: true, fault: null }
   const next = applyTelemetry(state, data)
   assert.equal(next.temperature, 182.4)
-  assert.equal(next.setpoint, 220)
+  assert.equal(next.setpoint, 100)          // UI-owned/cosmetic: telemetry setpoint is ignored
   assert.equal(next.actuators.heat, true)   // from enabled
   assert.equal(next.actuators.vacio, true)  // untouched
   assert.equal(next.suction.speed, 9)       // untouched
