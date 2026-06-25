@@ -1,0 +1,90 @@
+# HMI Tostado — Project Status & Continuation Notes
+
+**Last updated:** 2026-06-25
+**Branch:** `main` (feature `feat/arduino-bridge` merged in)
+**Deployed:** https://origendelvalle.vercel.app (Vercel auto-deploys from `main`)
+
+---
+
+## Where we are
+
+The coffee-roaster HMI (React/Vite/Tailwind on Vercel) is connected to a real
+Arduino UNO through a laptop **bridge** + **Cloudflare tunnel**. As of today, the
+**temperature path is live end-to-end on the tablet**: thermocouple → Arduino →
+USB serial → Node bridge → WebSocket → Cloudflare tunnel → the Vercel UI.
+
+### What actually drives hardware right now
+- ✅ **Temperature reading + roast curve** — real, from a type-K thermocouple (MAX6675).
+- ⏳ **Heat relay (SSR) control** — code is built and wired in the UI, but **not yet
+  exercised on hardware**. This is **tomorrow's focus**.
+
+### Deliberately simulated (demo only, no hardware)
+Setpoint slider (cosmetic — UI-owned, does not command the firmware), suction,
+resistances, fan, motors. The **e-stop** is wired to send a real command (forces
+SSR off) for safety once the relay is connected.
+
+---
+
+## Architecture (one line)
+
+`Tablet (Vercel UI) ⇄ wss:// Cloudflare tunnel ⇄ laptop Node bridge ⇄ USB serial ⇄ Arduino UNO`
+
+- Firmware: `firmware/tostadora/tostadora.ino` — closed-loop bang-bang controller,
+  JSON telemetry every 500 ms, 5 s comms watchdog + overtemp/thermocouple/e-stop gates.
+  (`PLOTTER_MODE = false` for JSON; set `true` to graph temp in the IDE Serial Plotter.)
+- Bench-test only sketch: `firmware/tc_test/tc_test.ino` — thermocouple read-only.
+- Bridge: `bridge/` — Node (`serialport` + `ws`). Mock mode for no-hardware testing.
+- UI live wiring: `src/lib/machineData.jsx` + `src/lib/bridgeClient.js` + `src/lib/bridgeProtocol.js`.
+
+### Protocol
+- Telemetry (Arduino→UI): `{"temperature":<°C|null>,"setpoint":<°C>,"actuators":{"heat":<bool>},"enabled":<bool>,"connected":true,"fault":<string|null>}`
+- Commands (UI→Arduino): `{"heat":bool}`, `{"setpoint":num}` (UI doesn't send this — cosmetic), `{"estop":true}`, `{"ping":1}` heartbeat.
+
+---
+
+## How to run it again (daily)
+
+On the laptop, with the Arduino plugged in:
+
+```bash
+# 1. Bridge (reads the real Arduino). Port is set in bridge/.env.
+cd hmi-tostado/bridge && npm start
+
+# 2. Cloudflare quick tunnel -> prints a wss URL
+cloudflared tunnel --url http://localhost:8080
+```
+
+- **Tablet:** open `https://origendelvalle.vercel.app/?bridge=wss://<the-tunnel-host>`
+- **Laptop (local, no tunnel):** `VITE_BRIDGE_URL=ws://127.0.0.1:8080 npm run dev` → http://localhost:5173
+- **Debug the bridge without the UI:** `cd bridge && URL=wss://<host> node smoke-client.mjs`
+- Serial port in use today: `/dev/cu.usbserial-A5069RR4` (FTDI). Find it with `ls /dev/cu.usbserial* /dev/cu.usbmodem*`.
+
+---
+
+## Known caveats / decisions
+- **Quick-tunnel URL is ephemeral** — changes every `cloudflared` restart. The `?bridge=`
+  query param lets the deployed site point at it without a rebuild. Plain
+  `origendelvalle.vercel.app` (no `?bridge=`) safely stays in simulator mode.
+- Roast-curve cadence is **20 s/point**; chart x-axis is in **seconds** (`TIEMPO (s)`),
+  CSV/XLSX export matches.
+- Final code review was clean (Fix-then-merge items all fixed). Deferred minors are
+  logged in `.superpowers/sdd/progress.md`.
+
+---
+
+## Next session — relay / heat control bring-up
+1. Wire the SSR (control + → D8, control − → GND). **Heatsink + fuse + enclosure; test
+   logic side with the heater UNPLUGGED first, watching the SSR's own LED.**
+2. Verify the heat toggle in the UI actually switches the SSR (telemetry `actuators.heat`).
+3. Verify the **comms watchdog**: enable heat, kill the bridge → SSR must turn off within 5 s.
+4. Verify the **e-stop** button cuts the SSR.
+5. Decide whether to make the **setpoint slider real** (currently cosmetic) so the target
+   temp is controllable from the UI.
+6. (Optional, permanent) Replace the quick tunnel with a **named Cloudflare tunnel** +
+   stable hostname + `VITE_BRIDGE_URL` env var in Vercel, so the plain URL "just works"
+   with no `?bridge=` param.
+
+## Reference docs
+- Design spec: `docs/superpowers/specs/2026-06-24-arduino-bridge-design.md`
+- Implementation plan: `docs/superpowers/plans/2026-06-24-arduino-bridge.md`
+- Bridge ops: `bridge/README.md`
