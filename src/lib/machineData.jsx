@@ -122,8 +122,11 @@ export function MachineDataProvider({ children }) {
 
   // Live mode: temperature/setpoint/heat/fault come from the laptop bridge.
   // Falls back to the full simulator when ?sim is present or no bridge URL is set.
-  const BRIDGE_URL = import.meta.env.VITE_BRIDGE_URL
-  const SIM = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('sim')
+  // Bridge URL resolution: ?bridge=<wss-url> wins (lets the deployed site point at
+  // an ad-hoc tunnel without a rebuild), else the build-time VITE_BRIDGE_URL.
+  const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams()
+  const BRIDGE_URL = params.get('bridge') || import.meta.env.VITE_BRIDGE_URL
+  const SIM = params.has('sim')
   const LIVE = !SIM && !!BRIDGE_URL
   const prevTempRef = useRef(null)
   const prevTsRef = useRef(null)
