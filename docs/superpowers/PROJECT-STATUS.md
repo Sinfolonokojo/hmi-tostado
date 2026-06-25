@@ -91,10 +91,16 @@ cloudflared tunnel --url http://localhost:8080
 - **SSR — Fotek SSR-40 DA** (DC control, AC switching, zero-cross):
   - Control input: terminal **3 (+)** ← Arduino **D8**, terminal **4 (−)** ← Arduino **GND** (`3-32VDC`, 5V logic HIGH triggers it).
   - Load output: terminals **1 / 2** (`24-380VAC`) switch the **Live** wire.
-  - 10 A ≪ 40 A label, but **heatsink + thermal paste is mandatory** (it dissipates ~12–15 W). Fotek is counterfeit-prone and **fails SHORTED (stuck ON)** — derate it and never rely on it alone.
-- **Overcurrent protection:** **15 A** time-delay, **250 VAC** fuse (e.g. Bussmann **MDA-15** + holder) or a **15 A C-curve DIN breaker**; **14 AWG** wire.
-- **Independent thermal cutoff** (NOT optional — software is not the safety net): **KSD9700** bimetal ~230–250 °C clamped to the chamber, or a one-shot thermal fuse ≥10 A, **in series with Live**.
-- **Load wiring order:** AC Live → fuse/breaker → thermal cutoff → SSR terminal 1; SSR terminal 2 → heater; heater → Neutral.
+  - 10 A ≪ 40 A label, but **heatsink + thermal paste required** (it dissipates ~12–15 W). Fotek is counterfeit-prone and **fails SHORTED (stuck ON)**. **Heatsink is on hand. ✅**
+
+### Prototype scope — supervised, lean parts (decided 2026-06-25)
+Running a minimal but not-reckless setup for the bench bring-up:
+- **SSR heatsink:** have it, will use it (the one non-negotiable). ✅
+- **Overcurrent:** rely on the **house wall-outlet breaker** (15/20 A) for the 10 A load — dedicated inline fuse **deferred**.
+- **Over-temp:** rely on the **burner's own internal thermostat** (it self-limits to the knob setting) — KSD9700 thermal cutoff **deferred**.
+- **Wire:** **reuse the heater's own rated power cord** — mains path stays on insulated ≥10 A conductors; never breadboard jumpers. No bulk 14 AWG purchase.
+- **Hard rule:** **supervised only** — never leave it running unattended until the thermal cutoff + inline fuse are added for a permanent build. Keep a fast kill in reach (outlet switch / burner switch / unplug).
+- **Load wiring order:** AC Live → SSR terminal 1; SSR terminal 2 → heater; heater → Neutral. (Add fuse + thermal cutoff in series with Live when going permanent.)
 - **Bench-test sequence (do in order):** (1) logic side only, heater **unplugged**, toggle heat in UI → watch the SSR's own LED; (2) plug heater, verify heat toggle switches it and telemetry `actuators.heat` follows; (3) watchdog: enable heat, kill the bridge → SSR off within 5 s; (4) e-stop button → SSR off.
 
 ## Reference docs
