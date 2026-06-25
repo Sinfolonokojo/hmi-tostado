@@ -69,8 +69,8 @@ La UI **sigue cargándose desde Vercel**; solo la conexión de datos en vivo va 
 ### 3.2 Puente / Bridge (`bridge/` — proyecto Node nuevo, ~100 líneas)
 - `serialport` + `@serialport/parser-readline` para el enlace USB.
 - `ws` para el servidor WebSocket (sin autenticación en el prototipo).
-- Túnel (ngrok rápido para prototipo; Cloudflare si se quiere hostname estable) que expone
-  el WebSocket en una dirección `wss://` pública.
+- Túnel **Cloudflare Tunnel** (`cloudflared`) que expone el WebSocket en un hostname
+  `wss://` estable con certificado real (se configura una sola vez).
 - Reconexión automática del serial; difunde estado de conexión a la UI.
 - Configuración por `.env`: `SERIAL_PORT`, `BAUD`, `WS_PORT`.
 
@@ -145,7 +145,7 @@ sano es servir la UI desde el laptop en la LAN para que el control no salga a In
 | Microcontrolador | Arduino Uno/Nano/Mega (USB) | Hardware existente |
 | Puente | Laptop (Node) | Corre serial + WS + túnel |
 | Origen de la UI | Vercel (sin cambio de URL) | Requisito del usuario |
-| Enlace seguro | Túnel con cert real (ngrok/Cloudflare) | Vercel es HTTPS; evita certs self-signed |
+| Enlace seguro | **Cloudflare Tunnel** (hostname estable) | Vercel es HTTPS; evita certs self-signed y URL cambiante |
 | Autenticación | Ninguna | Prototipo |
 | Watchdog | Sí (apaga SSR en pérdida de comms) | Seguridad: es una estufa |
 | Controles no-hardware | Permanecen simulados | Sin hardware detrás aún |
