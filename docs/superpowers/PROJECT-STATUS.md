@@ -1,6 +1,6 @@
 # HMI Tostado — Project Status & Continuation Notes
 
-**Last updated:** 2026-06-25
+**Last updated:** 2026-06-26
 **Branch:** `main` (feature `feat/arduino-bridge` merged in)
 **Deployed:** https://origendelvalle.vercel.app (Vercel auto-deploys from `main`)
 
@@ -9,19 +9,27 @@
 ## Where we are
 
 The coffee-roaster HMI (React/Vite/Tailwind on Vercel) is connected to a real
-Arduino UNO through a laptop **bridge** + **Cloudflare tunnel**. As of today, the
-**temperature path is live end-to-end on the tablet**: thermocouple → Arduino →
-USB serial → Node bridge → WebSocket → Cloudflare tunnel → the Vercel UI.
+Arduino UNO through a laptop **bridge** + **Cloudflare tunnel**. **Full closed-loop
+heat control is now live end-to-end** (temperature in + SSR heat out), validated on
+the bench AND on the real 1100 W burner.
 
-### What actually drives hardware right now
-- ✅ **Temperature reading + roast curve** — real, from a type-K thermocouple (MAX6675).
-- ⏳ **Heat relay (SSR) control** — code is built and wired in the UI, but **not yet
-  exercised on hardware**. This is **tomorrow's focus**.
+### What actually drives hardware now ✅
+- **Temperature reading + roast curve** — real, type-K thermocouple (MAX6675).
+- **Heat control (SSR)** — the "Activar Calor" toggle enables it; the Arduino's
+  bang-bang loop holds the **setpoint** (cuts SSR at setpoint, re-fires at setpoint−2 °C).
+- **Setpoint slider** — now **real** (commands the firmware target; UI-owned display).
+- **Emergency stop** — forces SSR off, latches.
+- **Comms watchdog** — SSR off ~5 s after the UI/heartbeat disappears.
 
-### Deliberately simulated (demo only, no hardware)
-Setpoint slider (cosmetic — UI-owned, does not command the firmware), suction,
-resistances, fan, motors. The **e-stop** is wired to send a real command (forces
-SSR off) for safety once the relay is connected.
+All four behaviors were verified: bench candle-test (control + hysteresis), e-stop,
+watchdog (close the UI → SSR off in 5 s), and a supervised real-burner run.
+
+### Still simulated (demo only, no hardware)
+Suction, resistances, fan, motors. (Their controls move but don't drive anything.)
+
+### Chart
+Roast-curve cadence 20 s/point; x-axis in **seconds** (`TIEMPO (s)`); the Y-axis +
+objective line follow the live **setpoint**.
 
 ---
 
@@ -38,7 +46,7 @@ SSR off) for safety once the relay is connected.
 
 ### Protocol
 - Telemetry (Arduino→UI): `{"temperature":<°C|null>,"setpoint":<°C>,"actuators":{"heat":<bool>},"enabled":<bool>,"connected":true,"fault":<string|null>}`
-- Commands (UI→Arduino): `{"heat":bool}`, `{"setpoint":num}` (UI doesn't send this — cosmetic), `{"estop":true}`, `{"ping":1}` heartbeat.
+- Commands (UI→Arduino): `{"heat":bool}`, `{"setpoint":num}` (now sent by the slider), `{"estop":true}`, `{"ping":1}` heartbeat.
 
 ---
 
@@ -61,22 +69,44 @@ cloudflared tunnel --url http://localhost:8080
 
 ---
 
+## Tunnel / connectivity (important)
+- **ngrok is BLOCKED on this Mac** by security software (likely corporate MDM/endpoint
+  protection): the binary is **deleted within ~3 s** of being written, and ngrok's
+  domains (`bin.ngrok.com`) are DNS-blocked. Don't retry ngrok on this machine — it's a
+  device policy, not a fixable error.
+- **Cloudflare works fine here.** Currently using a **Cloudflare quick tunnel**
+  (`cloudflared tunnel --url http://localhost:8080`) → ephemeral `*.trycloudflare.com`
+  URL. Tablet opens `origendelvalle.vercel.app/?bridge=wss://<tunnel-host>`.
+- **Permanent fix (deferred):** a **named Cloudflare tunnel needs a real domain you own**
+  (~$10/yr) added to Cloudflare with real nameserver delegation. The `origendelvalle.vercel.app`
+  zone someone added is a Vercel-owned subdomain, stuck `pending`, and **cannot work** —
+  delete it. With a real domain, set `VITE_BRIDGE_URL=wss://roaster.<domain>` in Vercel and
+  the plain URL just works (no `?bridge=`). Alternative: run the tunnel on a non-managed
+  machine / Raspberry Pi where ngrok or other tools aren't blocked.
+
 ## Known caveats / decisions
 - **Quick-tunnel URL is ephemeral** — changes every `cloudflared` restart. The `?bridge=`
   query param lets the deployed site point at it without a rebuild. Plain
   `origendelvalle.vercel.app` (no `?bridge=`) safely stays in simulator mode.
-- Roast-curve cadence is **20 s/point**; chart x-axis is in **seconds** (`TIEMPO (s)`),
-  CSV/XLSX export matches.
+- The laptop must keep running: **bridge + cloudflared + Arduino plugged in**.
 - Final code review was clean (Fix-then-merge items all fixed). Deferred minors are
   logged in `.superpowers/sdd/progress.md`.
 
 ---
 
-## Next session — relay / heat control bring-up
-1. Wire the SSR (control + → D8, control − → GND). **Heatsink + fuse + enclosure; test
-   logic side with the heater UNPLUGGED first, watching the SSR's own LED.**
-2. Verify the heat toggle in the UI actually switches the SSR (telemetry `actuators.heat`).
-3. Verify the **comms watchdog**: enable heat, kill the bridge → SSR must turn off within 5 s.
+## Done so far
+- ✅ Temperature live on tablet (prior session).
+- ✅ Full heat control: SSR wiring, bang-bang control, real setpoint, e-stop, watchdog —
+  all verified on bench + real burner (2026-06-26).
+
+## Possible next steps
+- **Stable URL:** get a real domain → named Cloudflare tunnel (see Tunnel section).
+- **Burner internal thermostat:** the hot plate's own thermostat may cycle and fight the
+  loop at higher targets; consider bypassing it to switch the element directly.
+- **Permanent safety hardening** (for unattended use): inline fuse + independent thermal
+  cutoff (KSD9700) — currently relying on the house breaker + burner thermostat + supervision.
+- **Optional UI:** live "Calentando / Manteniendo / Detenido" indicator (show the actual
+  SSR cycling vs. the master enable); align the "Objetivo Final" card with the setpoint.
 4. Verify the **e-stop** button cuts the SSR.
 5. Decide whether to make the **setpoint slider real** (currently cosmetic) so the target
    temp is controllable from the UI.
