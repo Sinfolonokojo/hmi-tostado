@@ -90,11 +90,18 @@ Live temperature should appear. Use **Activar Calor** (heat), **Ajustes** (setpo
 the roast curve on **Monitoreo**, and **Paro de emergencia** to stop.
 
 ## Daily run (Windows)
-Two PowerShell windows, Arduino plugged in:
-```powershell
-# window 1
-cd $HOME\hmi-tostado\bridge ; npm start
-# window 2
+
+**Easiest — double-click the launcher:** in `C:\Users\<you>\hmi-tostado`, run
+**`start-hmi.bat`**. It starts the bridge + tunnel, waits for the tunnel URL, then
+prints + copies the full **tablet link** (`…/?bridge=wss://…`) and opens it on the
+laptop to verify. Open the printed link on the tablet. To stop everything, run
+**`stop-hmi.bat`**. (First make sure `bridge\.env` has the right `COM` port.)
+
+**Manual** (two windows, Arduino plugged in) — use **cmd**, or `npm.cmd` in PowerShell:
+```bat
+:: window 1
+cd %USERPROFILE%\hmi-tostado\bridge && npm start
+:: window 2
 cloudflared tunnel --url http://localhost:8080
 ```
 Then open the tablet URL with the new `?bridge=wss://…` host (it changes each run).
@@ -105,6 +112,8 @@ Then open the tablet URL with the new `?bridge=wss://…` host (it changes each 
 | Symptom | Fix |
 | --- | --- |
 | `node`/`cloudflared` not found | reopen PowerShell (PATH refresh) after install |
+| `npm ... scripts is disabled on this system` | PowerShell blocks `npm.ps1`. Use **cmd** instead, or `npm.cmd`, or run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`. The `start-hmi.bat` launcher avoids this entirely. |
+| Bridge opens the port but `smoke-client` says "no frames" | wrong `COM` port — it opened *a* port but not the Arduino. Find the real one (Device Manager → unplug/replug) and update `bridge\.env`. |
 | Board not in Arduino IDE port list | install FTDI VCP or CH340 USB-serial driver; try another USB cable/port |
 | Bridge can't open serial / `COM` error | wrong `SERIAL_PORT` in `.env`; check the COM number in Device Manager; close Arduino IDE Serial Monitor (it locks the port) |
 | Tablet shows simulator, not live temp | missing/typo'd `?bridge=` host; confirm bridge + tunnel are both running |
