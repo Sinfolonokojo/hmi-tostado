@@ -302,16 +302,20 @@ export function MachineDataProvider({ children }) {
     [],
   )
 
-  const toggleResistance = useCallback(
-    (index) =>
-      setState((p) => ({
-        ...p,
-        resistances: p.resistances.map((r, i) =>
-          i === index ? { on: !r.on, kw: !r.on ? +(3.1 + Math.random() * 0.2).toFixed(1) : 0 } : r,
-        ),
-      })),
-    [],
-  )
+  const toggleResistance = useCallback((index) => {
+    // Resistencia 1 (index 0) doubles as a real heat control: toggling it also
+    // enables/disables the SSR (same command the Monitoreo "Calor" toggle sends).
+    if (index === 0) {
+      const heat = !stateRef.current.resistances[0].on
+      if (bridgeRef.current) bridgeRef.current.sendCommand('setHeat', [heat])
+    }
+    setState((p) => ({
+      ...p,
+      resistances: p.resistances.map((r, i) =>
+        i === index ? { on: !r.on, kw: !r.on ? +(3.1 + Math.random() * 0.2).toFixed(1) : 0 } : r,
+      ),
+    }))
+  }, [])
 
   // Live: the slider commands the firmware's target temperature (sendCommand).
   // The UI keeps owning the displayed value (we don't merge telemetry setpoint,
