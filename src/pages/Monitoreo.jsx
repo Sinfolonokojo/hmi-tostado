@@ -56,7 +56,7 @@ export default function Monitoreo() {
         </div>
 
         <div className="flex-grow min-h-[220px] sm:min-h-[280px] w-full my-stack-md">
-          <TempChart data={m.tempHistory} target={m.target} firstCrack={m.firstCrack} chartRef={chartRef} />
+          <TempChart data={m.tempHistory} target={m.setpoint} firstCrack={m.firstCrack} chartRef={chartRef} />
         </div>
 
         <div className="flex justify-between w-full border-t border-outline-variant/30 pt-4">

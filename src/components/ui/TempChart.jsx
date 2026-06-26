@@ -21,9 +21,12 @@ export default function TempChart({ data = [], target, firstCrack, chartRef }) {
   const labels = data.map((d) => `${d.minute * 20}`)
   const temps = data.map((d) => d.temperature)
 
-  const refs = [target, firstCrack].filter((v) => typeof v === 'number')
-  const yMin = Math.floor((Math.min(...temps, ...refs, 0) - 10) / 10) * 10
-  const yMax = Math.ceil((Math.max(...temps, ...refs, 0) + 10) / 10) * 10
+  // Y-axis scales to the live data plus the current target (setpoint), padded to
+  // the nearest 10°. firstCrack is still drawn as a marker but doesn't drive the
+  // scale, so a low setpoint zooms the axis in instead of being dwarfed by it.
+  const scaleVals = [...temps, target].filter((v) => typeof v === 'number')
+  const yMin = Math.floor((Math.min(...scaleVals) - 10) / 10) * 10
+  const yMax = Math.ceil((Math.max(...scaleVals) + 10) / 10) * 10
 
   const datasets = [
     {
