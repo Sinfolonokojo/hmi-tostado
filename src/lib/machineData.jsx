@@ -302,13 +302,15 @@ export function MachineDataProvider({ children }) {
     [],
   )
 
-  // Cosmetic in live mode: the slider does not command the hardware. The
-  // firmware holds its own default setpoint; only the heat toggle + e-stop are
-  // wired to the real SSR. (Prototype scope decision, 2026-06-24.)
-  const setSetpoint = useCallback(
-    (value) => setState((p) => ({ ...p, setpoint: clamp(Math.round(value), 0, 450) })),
-    [],
-  )
+  // Live: the slider commands the firmware's target temperature (sendCommand).
+  // The UI keeps owning the displayed value (we don't merge telemetry setpoint,
+  // so the slider doesn't stutter against incoming frames); UI and firmware clamp
+  // to the same 0..450 range, so they stay in sync. (Scope updated 2026-06-26.)
+  const setSetpoint = useCallback((value) => {
+    const setpoint = clamp(Math.round(value), 0, 450)
+    if (bridgeRef.current) bridgeRef.current.sendCommand('setSetpoint', [setpoint])
+    setState((p) => ({ ...p, setpoint }))
+  }, [])
 
   const allOff = useCallback(
     () => setState((p) => ({ ...p, resistances: p.resistances.map(() => ({ on: false, kw: 0 })) })),
