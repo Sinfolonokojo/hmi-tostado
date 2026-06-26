@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import { useMachineData } from '../lib/machineData.jsx'
 import Icon from '../components/Icon.jsx'
 import Toggle from '../components/ui/Toggle.jsx'
@@ -11,6 +11,7 @@ export default function Monitoreo() {
   const m = useMachineData()
   const heatOn = m.actuators.heat
   const chartRef = useRef(null)
+  const [editingFicha, setEditingFicha] = useState(false)
 
   // Snapshot the live roast curve as a PNG on a dark plate (readable when embedded).
   const getChartImage = () => {
@@ -70,39 +71,91 @@ export default function Monitoreo() {
       <section className="lg:col-span-4 glass-card p-container-padding flex flex-col gap-stack-md rounded-xl">
         <div className="flex items-center justify-between">
           <span className="text-label-md font-label-md text-outline-variant uppercase">Ficha Técnica</span>
-          <ExportMenu
-            onCsv={() => exportFichaCSV(m.batch, m.tempHistory)}
-            onXlsx={() => exportFichaXLSX(m.batch, m.tempHistory, getChartImage())}
-            onPng={() => exportChartPNG(m.batch, getChartImage())}
-          />
-        </div>
-
-        {/* Variedad + producto */}
-        <div className="flex items-center gap-4 bg-surface-container rounded-lg px-gutter py-4">
-          <div className="w-12 h-12 rounded-full bg-surface-container-highest flex items-center justify-center flex-shrink-0">
-            <Icon name={m.batch.product === 'Cacao' ? 'eco' : 'coffee'} className="text-primary" />
-          </div>
-          <div className="min-w-0">
-            <span className="text-headline-sm font-headline-sm block truncate">{m.batch.variety}</span>
-            <span className="text-label-md font-label-md text-primary">{m.batch.product}</span>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setEditingFicha((e) => !e)}
+              title={editingFicha ? 'Listo' : 'Editar ficha'}
+              className="w-9 h-9 flex items-center justify-center rounded-lg text-outline-variant hover:bg-surface-container-highest active:scale-90 transition-all"
+            >
+              <Icon name={editingFicha ? 'check' : 'edit'} />
+            </button>
+            <ExportMenu
+              onCsv={() => exportFichaCSV(m.batch, m.tempHistory)}
+              onXlsx={() => exportFichaXLSX(m.batch, m.tempHistory, getChartImage())}
+              onPng={() => exportChartPNG(m.batch, getChartImage())}
+            />
           </div>
         </div>
 
-        {/* Datos del lote */}
-        <div className="flex flex-col divide-y divide-outline-variant/30">
-          <SpecRow icon="tag" label="Lote" value={m.batch.lot} />
-          <SpecRow icon="location_on" label="Origen" value={m.batch.origin} />
-          <SpecRow icon="person" label="Propietario" value={m.batch.owner} />
-        </div>
+        {editingFicha ? (
+          <>
+            {/* Variedad + producto (edición) */}
+            <div className="flex flex-col gap-2 bg-surface-container rounded-lg px-gutter py-3">
+              <select
+                value={m.batch.product}
+                onChange={(e) => m.updateBatch({ product: e.target.value })}
+                className="bg-surface-container-highest border border-outline-variant rounded px-2 py-1.5 text-body-md text-on-surface focus:outline-none focus:border-primary"
+              >
+                <option value="Café">Café</option>
+                <option value="Cacao">Cacao</option>
+              </select>
+              <input
+                value={m.batch.variety}
+                onChange={(e) => m.updateBatch({ variety: e.target.value })}
+                placeholder="Variedad"
+                className="bg-surface-container-highest border border-outline-variant rounded px-2 py-1.5 text-body-md text-on-surface focus:outline-none focus:border-primary"
+              />
+            </div>
 
-        {/* KG de tostado */}
-        <div className="mt-auto flex items-center justify-between bg-surface-container rounded-lg px-gutter py-3">
-          <span className="text-label-md font-label-md text-outline-variant uppercase">KG de Tostado</span>
-          <span className="text-headline-sm font-data-mono text-on-surface">
-            {m.batch.roastedKg}
-            <span className="text-base text-outline-variant ml-1">kg</span>
-          </span>
-        </div>
+            {/* Datos del lote (edición) */}
+            <div className="flex flex-col divide-y divide-outline-variant/30">
+              <EditRow icon="tag" label="Lote" value={m.batch.lot} onChange={(v) => m.updateBatch({ lot: v })} />
+              <EditRow icon="location_on" label="Origen" value={m.batch.origin} onChange={(v) => m.updateBatch({ origin: v })} />
+              <EditRow icon="person" label="Propietario" value={m.batch.owner} onChange={(v) => m.updateBatch({ owner: v })} />
+            </div>
+
+            {/* KG de tostado (edición) */}
+            <div className="mt-auto flex items-center justify-between bg-surface-container rounded-lg px-gutter py-3">
+              <span className="text-label-md font-label-md text-outline-variant uppercase">KG de Tostado</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                value={m.batch.roastedKg}
+                onChange={(e) => m.updateBatch({ roastedKg: e.target.value === '' ? '' : Number(e.target.value) })}
+                className="w-24 bg-surface-container-highest border border-outline-variant rounded px-2 py-1 text-headline-sm font-data-mono text-on-surface text-right focus:outline-none focus:border-primary"
+              />
+            </div>
+          </>
+        ) : (
+          <>
+            {/* Variedad + producto */}
+            <div className="flex items-center gap-4 bg-surface-container rounded-lg px-gutter py-4">
+              <div className="w-12 h-12 rounded-full bg-surface-container-highest flex items-center justify-center flex-shrink-0">
+                <Icon name={m.batch.product === 'Cacao' ? 'eco' : 'coffee'} className="text-primary" />
+              </div>
+              <div className="min-w-0">
+                <span className="text-headline-sm font-headline-sm block truncate">{m.batch.variety}</span>
+                <span className="text-label-md font-label-md text-primary">{m.batch.product}</span>
+              </div>
+            </div>
+
+            {/* Datos del lote */}
+            <div className="flex flex-col divide-y divide-outline-variant/30">
+              <SpecRow icon="tag" label="Lote" value={m.batch.lot} />
+              <SpecRow icon="location_on" label="Origen" value={m.batch.origin} />
+              <SpecRow icon="person" label="Propietario" value={m.batch.owner} />
+            </div>
+
+            {/* KG de tostado */}
+            <div className="mt-auto flex items-center justify-between bg-surface-container rounded-lg px-gutter py-3">
+              <span className="text-label-md font-label-md text-outline-variant uppercase">KG de Tostado</span>
+              <span className="text-headline-sm font-data-mono text-on-surface">
+                {m.batch.roastedKg}
+                <span className="text-base text-outline-variant ml-1">kg</span>
+              </span>
+            </div>
+          </>
+        )}
       </section>
 
       {/* Actuadores */}
@@ -181,6 +234,20 @@ function SpecRow({ icon, label, value }) {
       <Icon name={icon} className="text-outline-variant text-xl flex-shrink-0" />
       <span className="text-label-md font-label-md text-outline-variant uppercase flex-shrink-0">{label}</span>
       <span className="text-body-md text-on-surface text-right ml-auto truncate">{value}</span>
+    </div>
+  )
+}
+
+function EditRow({ icon, label, value, onChange }) {
+  return (
+    <div className="flex items-center gap-3 py-2">
+      <Icon name={icon} className="text-outline-variant text-xl flex-shrink-0" />
+      <span className="text-label-md font-label-md text-outline-variant uppercase flex-shrink-0">{label}</span>
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="ml-auto w-1/2 bg-surface-container-highest border border-outline-variant rounded px-2 py-1 text-body-md text-on-surface text-right focus:outline-none focus:border-primary"
+      />
     </div>
   )
 }

@@ -116,7 +116,18 @@ export function totalConsumption(resistances) {
 }
 
 export function MachineDataProvider({ children }) {
-  const [state, setState] = useState(INITIAL_STATE)
+  // Seed batch (ficha técnica) from localStorage so manually-entered data
+  // survives a page refresh.
+  const [state, setState] = useState(() => {
+    if (typeof window === 'undefined') return INITIAL_STATE
+    try {
+      const saved = window.localStorage.getItem('hmi.batch')
+      if (saved) return { ...INITIAL_STATE, batch: { ...INITIAL_STATE.batch, ...JSON.parse(saved) } }
+    } catch {
+      /* ignore bad/blocked storage */
+    }
+    return INITIAL_STATE
+  })
   const stateRef = useRef(state)
   stateRef.current = state
 
@@ -330,6 +341,21 @@ export function MachineDataProvider({ children }) {
 
   const clearEmergency = useCallback(() => setState((p) => ({ ...p, emergency: false })), [])
 
+  // Ficha técnica: merge manually-entered batch fields and persist them.
+  const updateBatch = useCallback(
+    (partial) =>
+      setState((p) => {
+        const batch = { ...p.batch, ...partial }
+        try {
+          window.localStorage.setItem('hmi.batch', JSON.stringify(batch))
+        } catch {
+          /* ignore blocked storage */
+        }
+        return { ...p, batch }
+      }),
+    [],
+  )
+
   const value = {
     ...state,
     toggleVacio,
@@ -346,6 +372,7 @@ export function MachineDataProvider({ children }) {
     resetHistory,
     startRoast,
     stopRoast,
+    updateBatch,
   }
 
   return <MachineDataContext.Provider value={value}>{children}</MachineDataContext.Provider>
